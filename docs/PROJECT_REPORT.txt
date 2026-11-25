@@ -1,0 +1,329 @@
+FinTextIntelligence: project report
+===================================
+
+This is the story of the project from the first draft of the requirements to the release
+I stopped at, shared-xlmr.v4.1. The evaluation report has all the numbers in detail.
+This document is about the order things happened in, why I made the choices I did, and
+what went wrong along the way.
+
+The requirements (July and August)
+----------------------------------
+
+The idea was a single service that reads financial text, such as headlines, social posts
+and press releases, and gives a trading desk four signals about it. Is the news positive
+or negative? Is the text abusive? Does it look like a scam or misinformation? And has
+the claim been confirmed by a primary source, like an SEC filing? It had to work in
+English and Arabic, and fast enough to sit in front of an automated trading system,
+which meant 50 ms per item on an ordinary CPU.
+
+The PRD went through several drafts between late July and August (v0.1, v0.2, then v1.4
+and v1.5), and most of the changes narrowed the scope rather than adding to it. Two
+constraints from it shaped almost everything else: the latency budget, and a rule that
+firm claims about Arabic need a public dataset labelled by native speakers behind them,
+since I don't read Arabic. It also set 14 acceptance gates, such as English sentiment F1
+of at least 0.80 and Arabic toxicity AUROC of at least 0.92. Having those written down
+before any results came in stopped me from moving the goalposts later.
+
+The first build (29 to 31 August)
+---------------------------------
+
+I started on 29 August from the v1.5 PRD, building the service along normal
+software-engineering lines. The first version used a simple rule-based scorer in place
+of a model, so the API, rules, provenance check and tests could all be built and tested
+without a GPU.
+
+The next day went mostly on making it usable and readable. I asked for the code and
+architecture to be simplified so a person could follow them easily, and for a web page
+to paste news into: plain HTML with a React controller calling the Python API. I based
+the look on a design studio's site I liked, then changed the yellow accents to black.
+
+Looking at the first working version, I noticed there was no human step. The PRD says
+the service reports and people decide, so I asked for a review step where a person can
+accept or reject a flag. That grew into the trading gate, which turns the signals into
+one of three calls: buy, sell, or wait for human approval. I also asked for the input
+box to accept a link to an article, not just pasted text. On 31 August I added that
+whatever comes in, together with the reviewers' accept and reject decisions, should feed
+back into fine-tuning. That became the capture and corpus code. Only human verdicts are
+used as labels, never the model's own outputs.
+
+The pipeline order settled then and didn't change. Text is cleaned first, then scored by
+the model. Then come two rule layers: a lexicon of slurs and direct threats, the only
+place a rule overrides the model, and scam-pattern rules that run independently of the
+model. Provenance runs last because it's the only step that looks things up in an index.
+
+The first model (31 August to 17 September)
+-------------------------------------------
+
+The first training run started on my laptop's CPU on 31 August. It was clearly going to
+take far too long, so I stopped it and moved training to Google Colab on a T4 GPU. In
+mid-September I set up a proper data folder and a fetcher for the datasets, trained a
+fast first model on Colab (about 42,000 rows, 21 minutes), and had it wired into the
+registry so the web page served the model instead of the rules. It was registered as
+shared-xlmr.v1-fp32 on 17 September.
+
+Its numbers looked very good (English toxicity AUROC 0.98), but I later realised the
+decision thresholds had been tuned on the same rows the metrics were reported on, which
+flatters every thresholded number. int8 quantisation, which the latency plan depended
+on, also failed its parity check on the sentiment head. Both problems came back later.
+
+On 17 September I also spent time rewriting the project description. I cut it down to
+the problem statement and narrowed it to high-frequency trading rather than compliance.
+
+Checking it against the PRD (15 November)
+-----------------------------------------
+
+After a break of about two months, I had the project reviewed section by section against
+PRD v1.4. The service architecture and the provenance design matched closely. The model
+and data work didn't. The most important finding was a mistake I had repeated in my own
+description of the project: Arabic sentiment had been measured zero-shot, with no Arabic
+training data at all, when the PRD actually plans to machine-translate the English data
+and train on it. The review also found the thresholds problem from the first model,
+which breaks the PRD's requirement for a frozen test set.
+
+It also pointed out that three things I had asked for went beyond what the PRD allows:
+
+- the full web app (the PRD allows only dashboards and a demonstration notebook);
+- buy and sell calls (the PRD says the service only emits scores);
+- keeping submitted text for retraining (the PRD rules out customer data).
+
+I kept the first two as deliberate extensions. The third stays behind a licence gate
+that blocks training on captured text until someone with the authority to decide clears
+it.
+
+Fixing those two came first. The data was split three ways, cut once with a fixed seed:
+train to learn from, dev to tune thresholds on, and a frozen test set that nothing is
+ever tuned on. I added fingerprints (a hash of the actual text in each split) to every
+run's manifest, so a later run could prove it was tested on exactly the same rows.
+
+Data and notebook (17 and 18 November)
+--------------------------------------
+
+On 17 November I made sure every dataset was actually downloaded. One source was the
+SEC's investor alerts, which I saved by hand when the site wouldn't download cleanly.
+They became the basis for the scam-pattern rules, with tests that quote phrases from
+real alerts.
+
+I then moved training into a single Colab notebook that reads the code from my Google
+Drive, so I didn't have to upload a zip file each time, and set up a Hugging Face token
+that works on the Mac, in Colab and locally. On the morning of 18 November I translated
+the English financial sentiment sets into Arabic in Colab. They are used for training
+only, and only where the English original is in the training split, so nothing
+translated from a test row can leak in.
+
+There were some unglamorous problems along the way. At one point the FiQA dataset loaded
+zero rows without any error, and a model trained without it before I noticed. Now a
+source that loads nothing stops the run. I also asked for progress bars everywhere,
+because a silent hour-long cell gives no clue whether anything is happening.
+
+Runs 1 and 2 (18 November)
+--------------------------
+
+Run 1 trained on the full data on a T4, at about 17 minutes an epoch, an hour in all.
+The diagnosis afterwards pointed at Arabic toxicity as the weakest area, so before run 2
+I made three changes. Training now used the same cleaned text the service scores;
+before, it had trained on raw text and been served cleaned text. Arabic spelling
+variants were folded together. And Arabic toxicity rows got 1.5 times the weight in the
+loss. Run 2 went on an A100 and took 15 minutes.
+
+                          Run 1   Run 2   Target
+  ----------------------- ------- ------- --------
+  Arabic toxicity AUROC   0.896   0.907   0.92
+  Arabic toxicity F1      0.663   0.675   0.80
+  English toxicity F1     0.796   0.793   0.85
+  English sentiment F1    0.800   0.821   0.80
+  English misleading F1   0.803   0.818   0.80
+
+Run 2 became shared-xlmr.v2. The registry refused to promote it because it measured 58
+ms at p95, over the 50 ms budget. At that point I chose the correct way to finish over
+the fastest one, and that decision explains most of what follows.
+
+Was the improvement real?
+-------------------------
+
+Run 2 beat run 1 on Arabic toxicity by about a point of AUROC, and a paired bootstrap on
+the same test rows said the difference was real (+0.011, interval +0.004 to +0.017). I
+nearly wrote it up as the fixes working.
+
+Then I trained run 2's setup three more times, changing only the random seed. The four
+runs scored 0.907, 0.895, 0.906 and 0.894, and run 1's 0.896 sat right in that range.
+The paired test had answered a narrower question than I'd thought: run 2 the trained
+model beat run 1 the trained model, but that didn't make the setup better. Seeds alone
+moved the number as much as my fixes had.
+
+I also trained run 1's setup three more times and compared the two groups of four, with
+an interval that resamples both the test rows and the runs. On Arabic toxicity there was
+no detectable difference. The one real effect was on Levantine Arabic, a dialect the
+model never trains on, where the spelling fold helped by about a point. I kept the
+fixes, since training on the text you serve is right regardless, but I changed the
+write-up. From then on every comparison of setups used several seeds.
+
+Why Arabic toxicity is stuck
+----------------------------
+
+Breaking the Arabic numbers down by dataset showed where the problem is. One dataset,
+OSACT4, already passes the AUROC target on its own (0.942). The other, OSACT5, drags the
+combined figure down (0.854), and the model underfits it even on rows it trained on. No
+threshold on either dataset reaches 0.80 F1; the best is 0.760.
+
+A fair number of the model's most confident mistakes were tweets that read as offensive
+but are labelled as not. To measure how common that is, I'd need a fluent reader, so a
+label audit is designed instead: 200 randomly drawn tweets, relabelled blind. That would
+estimate the label noise and the best F1 any model could reach against these labels. The
+sample is drawn and the scoring command is written. I couldn't find an annotator, so it
+hasn't been run.
+
+Provenance
+----------
+
+The provenance check answers whether a market-moving claim is backed by an SEC filing.
+To test it I built replay sets from real 8-K filings: genuine claims taken from a
+company's own press release, and fabricated ones with the company swapped for another.
+
+Matching against filing titles only found 43 of 115 genuine claims. Matching against the
+filing text raised that to 80, but also produced three false confirmations on the dev
+set, where a filing named the right company but not the claim. A filing with text now
+has to mention something specific from the claim, such as a name or an amount. To be
+fair to the test, I also removed the claim's own sentence from the filing before
+matching. With that, it confirms 72 genuine claims with no false confirmations (72 out
+of 72, lower bound 0.949), and none of the 97 fabricated claims were confirmed.
+
+One small mistake from this stage: the SEC asks automated clients for a contact address,
+and I once ran the downloader with a placeholder. Every request came back 403, and the
+script still wrote a half-empty file. It now writes nothing unless every filing
+downloads.
+
+Arabic sentiment
+----------------
+
+Even with translated training data, Arabic sentiment was poor in v2: 0.490 macro-F1 on
+ArSAS, a set of native Arabic tweets. The model almost never answered "neutral". It had
+learnt what neutral looks like in translated financial sentences, and a neutral tweet
+looks different.
+
+The cheap fix came first: per-class offsets on the model's scores, tuned on dev, lifted
+it to 0.569 (shared-xlmr.v2.1). But the real problem was ranking, not calibration. The
+neutral class was barely separated from the others (AUROC 0.68), and no offset fixes
+that.
+
+So I added native training data. ArSarcasm-v2 is 15,500 dialectal Arabic tweets labelled
+positive, negative or neutral, under an MIT licence. It shares no tweets with ArSAS, and
+each tweet is checked against every dev and test row before it joins training; six
+near-duplicates were dropped. This departed from the PRD, which named translation as the
+source, so the model card records why.
+
+It was the biggest change in the project. Across three seeds Arabic sentiment went from
+0.455 to 0.734, and neutral AUROC from 0.68 to about 0.91. Nothing else got worse. A
+jump that large made me suspicious, so I compared every test tweet against every new
+training tweet. The closest match was a YouTube "added a video to a playlist" message,
+and removing the few borderline cases changed nothing. Seed 2 became shared-xlmr.v3.
+
+Making the checks repeatable
+----------------------------
+
+By then several checks existed only as one-off scripts. Comparing groups of runs, the
+leakage check, and checking the served model against offline scores became proper
+commands with tests, and the steps for bringing in a new run were written down.
+
+Doing that caught a mistake in my own leakage check. It had compared test tweets against
+the dataset as published, which still held the six tweets the split had already removed,
+so it reported false perfect matches. It now compares against the rows actually used in
+training.
+
+The release run (20 November)
+-----------------------------
+
+The final model was trained through the notebook's main path on an A100, in 17 minutes,
+on exactly the v3 data. Back on the Mac I checked its fingerprints and re-scored it
+locally (all 36,000 rows matched Colab's scores). Then came the comparison with v3, the
+leakage check, the export, the offsets, and a check of the live service against the
+offline scores.
+
+It came out as a fourth seed of the same setup: slightly worse on Arabic sentiment than
+v3, slightly better on Levantine toxicity, and no detectable difference elsewhere. I
+chose it, as v4.1, over v3.1 for two reasons. It has more room on English sentiment, the
+passing gate closest to failing. And it's a single run at the default seed, rather than
+the best of three.
+
+Latency and int8
+----------------
+
+Re-measuring latency taught me something about measuring latency. v2 had measured 58 ms
+at p95. Measured again, alternating with the newer versions in one session, it came in
+around 50 ms, the same as v3 and v4. In a later session every version slowed together
+from about 50 to 61 ms, probably as the laptop heated up. Only side-by-side comparisons
+on this machine mean anything.
+
+The latency plan assumed an int8 model on an x86 server, and int8 had failed on my Mac,
+which is ARM. Colab's machines are Intel, so a notebook step tested it there. On x86,
+int8 really is about twice as fast as full precision, but it changed far too many
+decisions. On 1,000 test rows it flipped 90 sentiment labels and over 40 toxicity and
+misleading flags, roughly double what it did on ARM. Seven other quantisation recipes
+did no better. The ones that kept the speed changed as many decisions, and the most
+accurate one barely sped anything up. Simple int8 is ruled out for this model. The
+service runs at full precision, and the latency and throughput gates stay failed.
+
+Closing it out
+--------------
+
+When I decided to stop building, the last round of checks found two things. First, the
+default config file still held the rule-based scorer's thresholds, so the trained model
+would have flagged toxicity at 0.35 instead of its own 0.645. The serving check had
+compared scores and labels but not the final flags, which is why it hadn't caught this.
+There's now a release config with the right thresholds, and a test that fails if they
+drift. Second, the misleading-content head flags some ordinary company news, such as a
+guidance cut and a bank's stake purchase. It learnt "misleading" from political fake
+news, and corporate news is a different kind of text. That's now in the model card's
+limitations.
+
+The project ships as a code package, a model package with the trained weights, a private
+data package with the exact training and test splits, and an install guide for a laptop
+or a server.
+
+Where it ended up
+-----------------
+
+  Gate                      v4.1           Target    
+  ------------------------- -------------- --------- ------
+  English sentiment F1      0.807          0.80      pass
+  English toxicity AUROC    0.953          0.95      pass
+  English misleading F1     0.807          0.80      pass
+  Provenance precision      72/72          0.95      pass
+  Claim-extraction recall   0.934          0.85      pass
+  Arabic toxicity AUROC     0.909          0.92      fail
+  Arabic toxicity F1        0.710          0.80      fail
+  English toxicity F1       0.793          0.85      fail
+  English–Arabic F1 gap     0.083          0.07      fail
+  p95 latency               51–61 ms       50 ms     fail
+  Throughput                about 30 rps   100 rps   fail
+
+Three more gates (provenance timing, human-review precision and availability) can only
+be measured in a live pilot. So it's 5 passes, 6 fails and 3 not yet measurable. The
+model isn't accepted, and it isn't promoted.
+
+That's not the result I hoped for, but most of the failures are well understood. Arabic
+toxicity is limited by one dataset and probably its labels. The latency gap needs a
+smaller model or different hardware, not more tuning. English toxicity F1 is at the
+ceiling of what any threshold can get from this model.
+
+If I carried on, I'd train a smaller six-layer version for latency, run the label audit
+as soon as I found an Arabic reader, and build a small hand-labelled set of real
+financial text. Every number here comes from public benchmarks, and none of them is
+financial text.
+
+What I'd do differently
+-----------------------
+
+I'd train several seeds from the very first comparison. I spent a day believing an
+improvement that turned out to be noise, and the fix was cheap once I saw it.
+
+I'd check the work against the PRD much earlier. The September model sat for two months
+with Arabic sentiment measured in a way the PRD didn't intend, and with thresholds tuned
+on the test data, until a section-by-section review caught both.
+
+I'd measure what matters to a user from the start. The int8 parity check looked at five
+sentences, and counting flipped decisions on a thousand real rows told a much clearer
+story. I only did that at the end.
+
+And I'd test the whole served path, config included, earlier. The threshold mix-up got
+past several releases because every check looked at the model and none looked at the
+file it was launched with.

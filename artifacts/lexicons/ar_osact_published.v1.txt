@@ -1,0 +1,16 @@
+# ar_osact_published.v1 - Arabic high-severity toxicity lexicon
+#
+# NOT curated in-house. This file is a versioned integration point for a
+# lexicon published with the OSACT shared-task literature (PRD 6.5). Populate
+# it from the published distribution under that distribution's terms and
+# record the provenance in CHANGELOG.txt before enabling it in a release.
+#
+# The placeholder rows below exist so that the loading, versioning, matching
+# and override paths are exercised in CI without this repository asserting
+# anything about Arabic terms it cannot verify.
+#
+# term	subtype	severity	notes
+__ar_slur_placeholder_1__	hate	high	replace from published OSACT lexicon
+__ar_slur_placeholder_2__	hate	high	replace from published OSACT lexicon
+__ar_threat_placeholder_1__	threat	high	replace from published OSACT lexicon
+__ar_profanity_placeholder_1__	profanity	medium	replace from published OSACT lexicon

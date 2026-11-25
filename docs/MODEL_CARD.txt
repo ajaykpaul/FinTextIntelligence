@@ -1,0 +1,221 @@
+Model card: shared multilingual encoder, four heads
+===================================================
+
+Artefact family: shared-xlmr.* Service version: 1.5.0 Status: MVP, pilot only. Not
+approved for unattended action on any output. Current release: shared-xlmr.v4.1 (run
+shared-xlmr-20261119-1831), not accepted: 5 of 14 gates pass on point estimates, 3 of
+those within their 95% interval; 6 fail and 3 need a pilot. Details in
+EVALUATION_REPORT.txt. v4.1 is v4 with Arabic sentiment offsets tuned on dev (0.728 →
+0.739). It is registered but not promoted: promotion is blocked by latency.
+
+Earlier versions, all still registered:
+
+- shared-xlmr.v2 (run shared-xlmr-20261118-1659), trained without native Arabic
+  sentiment data: Arabic sentiment 0.490.
+- shared-xlmr.v2.1: v2 with offsets, 0.569.
+- shared-xlmr.v3 / v3.1 (run shared-xlmr-v3-seed2): the same setup as v4, the best of
+  three seeds on dev. Within seed noise of v4: Arabic sentiment is 0.012 higher,
+  Levantine toxicity a little lower.
+
+v4.1 was chosen over v3.1 for two reasons. It has more margin on English sentiment, the
+passing gate closest to failing (0.807 against 0.801 on test, 0.834 against 0.818 on
+dev). And it is a single default-seed run from the notebook's standard path, not a
+best-of-three pick.
+
+The numbers in this card are recorded per release by the acceptance harness
+(fintext accept). A release whose card carries no measured numbers has not been through
+the harness and is not promotable.
+
+----------------------------------------------------------------------------------------
+
+What it does
+------------
+
+One XLM-R encoder with four heads (PRD 6.2):
+
+  Head                 Output                                Languages    Gated
+  -------------------- ------------------------------------- ------------ --------------
+  Sentiment            positive / negative / neutral         EN, MSA AR   English only
+  Toxicity             binary toxic / not toxic              EN, MSA AR   Both
+  Toxicity subtypes    hate, harassment, profanity, threat   EN, MSA AR   Reported
+  Misleading content   binary likely-misleading              EN only      English only
+
+Two components are not models and are versioned separately: the high-severity lexicon
+floor (fintext.lexicon) and the scam-pattern rules (fintext.scam_rules). The provenance
+check (fintext.provenance) contains no model at all; it is rules and retrieval.
+
+Intended use
+------------
+
+- Prioritising items for human review on a markets desk and in compliance.
+- Gating or down-weighting automated trading signals derived from text.
+- Batch scoring of historical windows for backtests.
+
+Out of intended use
+-------------------
+
+- Automated action on any output. The service reports; the policy layer decides (PRD
+  6.4). No state and no score blocks content on its own.
+- Fact checking. The misleading-content head detects the style and structure of
+  misleading financial content. It never asserts that a claim is false, and its output
+  is always "likely misleading, needs review" (PRD 4.3).
+- Dialectal Arabic. Scope is Modern Standard Arabic. Dialect performance is measured on
+  benchmark probes and published, but it is not a commitment (PRD 3.2, 8.1).
+- Arabic sentiment as a decision input. Reported, never gated: there are no verifiable
+  Arabic gold labels for financial sentiment in this build (PRD 1.1).
+
+Why this architecture
+---------------------
+
+Compact encoders are a deliberate choice over a generative model (PRD 6.1, which reads
+in full only in v1.4 of the PRD): they fit the 50 ms hot path, quantise to int8, produce
+calibrated probabilities that thresholding depends on, and give token-level attributions
+that can be archived for audit. An LLM would add latency, cost and prompt-injection
+surface without a demonstrated accuracy advantage on tasks of this scope.
+
+The prompt-injection point is the load-bearing one for a service whose input is
+adversarial by definition. Scored text is treated as data throughout: measured, never
+interpreted, never executed. There is no path by which the content of an item can change
+what the service does with it.
+
+Training data
+-------------
+
+Public sources only, listed with licences in LICENCE_LOG.txt and enforced by
+catalogue.check_training_sources. No private, internal, customer or employee data is
+used anywhere. Reddit appears in the catalogue for backtest realism and the licence gate
+refuses it as a training source.
+
+Machine-translated Arabic copies are derived from the public English sets and introduce
+no additional source. They are labelled as MT-derived in the run manifest, because a
+metric measured on translated data is not the same claim as one measured on native text.
+
+Native Arabic sentiment (v3 setup, shared-xlmr.v3). Translated financial English taught
+the head a neutral class that doesn't transfer to tweets (see Arabic sentiment in the
+evaluation report). ArSarcasm-v2 (MIT; 15,548 tweets labelled positive, negative,
+neutral) is a train-only source for the v3 setup. It shares no tweet with ArSAS, which
+stays the evaluation set; each tweet is also checked against every held-out row before
+it joins training, and 6 near duplicates were dropped. This departs from PRD 7, which
+named translation as the Arabic sentiment training source, because the measurement
+showed that source can't teach the class on its own.
+
+Evaluation
+----------
+
+Frozen test splits, cut once. Gates are in PRD 8.1 and encoded in fintext.evaluation:
+
+  Metric                                  English target   English, v4.1   Arabic target   Arabic, v4.1
+  --------------------------------------- ---------------- --------------- --------------- -------------------
+  Sentiment macro-F1                      ≥ 0.80           0.807           reported only   0.739 (v2: 0.490)
+  Toxicity AUROC                          ≥ 0.95           0.953           ≥ 0.92          0.909 ✗
+  Toxicity F1 at the deployed threshold   ≥ 0.85           0.793 ✗         ≥ 0.80          0.710 ✗
+  Misleading-content F1                   ≥ 0.80           0.807           n/a             n/a
+  Cross-language toxicity F1 gap          ≤ 7 points       8.3 ✗                           
+
+Deployed thresholds (tuned on dev): toxicity EN 0.645, AR 0.253; misleading 0.468.
+Arabic sentiment offsets (log scale, tuned on dev): positive +0.6, negative 0, neutral
+−0.2. No threshold reaches either toxicity F1 target on dev (best 0.825 EN, 0.754 AR),
+so those two need a better model or cleaner labels, not threshold work. The Arabic
+analysis is in ARABIC_TOXICITY.txt.
+
+Thresholds are tuned recall-first, bounded by the requirement that weekly human review
+keep English alert precision at or above 90% (PRD 8.4). "F1 at the deployed threshold"
+and "best achievable F1" are different numbers; the gate means the first.
+
+Explanations
+------------
+
+Every toxicity flag carries attributed spans. Occlusion attribution runs online: it is
+model-agnostic, deterministic and needs no gradients. Integrated gradients over the
+embedding layer is the PRD's offline method; it needs the trained model's embeddings, so
+it lands with the model rather than ahead of it.
+
+Character-level rationale agreement against HateXplain is reported per release. An
+explanation that does not track human rationales is worse than no explanation for a
+reviewer deciding whether to act.
+
+Known limitations
+-----------------
+
+- The developer does not read Arabic. Every firm Arabic commitment rests on
+  native-speaker-labelled public benchmarks (OSACT). The Arabic lexicon is a published
+  research list, versioned and integrated but not curated in-house. Arabic alert review
+  is machine-translation-assisted and reported with that qualification (PRD 11).
+
+- Public benchmarks differ from production traffic. Jigsaw comment text is not
+  bank-channel text and ISOT news is not market rumour. The domain gap is measured on
+  the hand-labelled issuer slice and recorded here per release.
+
+- Obfuscation. Leetspeak, spacing and character substitution are handled by the lexicon
+  floor's folding, not by the model. Arabizi is out of scope and is flagged rather than
+  scored. The weekly canary measures recall on all of these.
+
+- Figurative financial language. "The stock was hammered", "a bloodbath in tech" are
+  ordinary market idiom, and a toxicity model trained on comment data is prone to them.
+  They are in the negative controls of the canary set.
+
+- Quantisation. The design serves int8. For v2, int8 failed the parity check (score
+  shifts up to 0.099 against a 0.05 tolerance) and was slower than fp32 on the ARM
+  machine it was measured on, so v2 is exported as fp32 with four intra-op threads. That
+  misses the 50 ms p95 at 256 tokens (58 ms full pipeline) and the registry refused to
+  promote it. Re-measured alongside v3, every version sits at 49.5–51.4 ms: on the edge
+  of the target, not passing it with margin. Throughput, at about 34 rps against 100,
+  fails clearly. v3 and v4 have the same int8 parity failure (v4: sentiment 0.095,
+  misleading 0.066) and the same latency as v2 measured side by side. For v4.1 the worst
+  values from one session were 60.5 ms and 26.8 rps. On an x86 Xeon (Colab), int8 is
+  about 2× faster than fp32 but less accurate than on ARM: on 1,000 held-out rows it
+  flips 90 sentiment labels, 41 toxicity flags and 48 misleading flags, against 43, 23
+  and 31 on ARM. Six other dynamic recipes were tested on both architectures:
+  reduce_range, unsigned weights, fp32 embeddings and heads, feed-forward only, and
+  first feed-forward only. None passes. The recipes that keep the speed-up flip as many
+  decisions or more. The most accurate one (first feed-forward layer only) still flips
+  3.3% of sentiment labels and is only 1.1× faster. Dynamic post-training int8 is ruled
+  out for this model. The remaining routes are outlier-aware static quantisation,
+  quantisation-aware fine-tuning, a distilled smaller encoder, or a different latency
+  budget or serving hardware.
+
+- Training–serving text. Before v2, the model trained on raw text and was served
+  normalised text. Both now go through preprocess.model_text; a model trained before
+  that change is served slightly different input than it saw.
+
+- Market idiom. The canary's one false positive, on v2 and v4.1 alike, is "this stock is
+  a bloodbath today".
+
+- Misleading content on ordinary corporate news. The head learnt "misleading" from
+  political claims and fake news (LIAR, ISOT, FakeNewsNet, PHEME). In the release demo,
+  v4.1 flags two genuine headlines:
+
+  - a guidance cut, at 0.52;
+  - a bank's stake acquisition, at 0.83 and high priority.
+
+  Its output is a review prompt, never a verdict. The domain gap needs the in-domain
+  test set before this head is relied on for corporate news.
+
+- Arabic sentiment on tweets. Trained on translated financial text, the head rarely
+  calls a tweet neutral. Offsets in v2.1 recover part of that, but the neutral class is
+  still weakly separated (AUROC 0.68). Adding native tweets (v3) fixes the ranking:
+  neutral AUROC 0.91–0.92 and macro-F1 0.730–0.738 across three seeds, with no
+  near-copies of test tweets in the added data. The current release carries it: 0.739 in
+  v4.1, and 0.728–0.738 across the four runs of this setup. ArSAS is not financial text,
+  so this is dialectal tweet sentiment, not Arabic financial sentiment.
+
+Ethical and operational considerations
+--------------------------------------
+
+- Recall-first toxicity tuning deliberately produces false positives. The 90% weekly
+  review-precision floor is what keeps that from becoming a reviewer workload problem,
+  and it is a gate.
+- Toxicity models carry known disparities across dialect and demographic markers. The
+  disparity report is produced in week five and published with the release; dialect
+  slices are reported and never gating, which means a disparity is visible rather than
+  hidden inside an aggregate.
+- No output is a truth claim. The provenance states express that support exists, has not
+  yet arrived, or did not arrive within a calibrated window. pending is the normal
+  condition of breaking news and must never be read as doubt (PRD 6.4).
+
+Lineage
+-------
+
+Every response carries lineage: model version, lexicon versions, threshold version,
+rules version, service version and config digest. For any flag raised at any point,
+these five fields identify exactly what produced it.

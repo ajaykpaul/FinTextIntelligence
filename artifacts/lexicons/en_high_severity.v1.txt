@@ -1,0 +1,24 @@
+# en_high_severity.v1 - English high-severity toxicity lexicon
+# Curated in-house. See README.txt for the placeholder policy on slurs.
+# term	subtype	severity	notes
+__slur_placeholder_1__	hate	high	controlled list entry, see ops runbook
+__slur_placeholder_2__	hate	high	controlled list entry, see ops runbook
+__slur_placeholder_3__	hate	high	controlled list entry, see ops runbook
+i will kill you	threat	high	direct threat of violence
+i'll kill you	threat	high	contraction variant
+kill yourself	threat	high	incitement to self-harm
+kys	threat	high	abbreviated incitement, common in chat
+you should die	threat	high	direct threat
+i know where you live	threat	high	implied threat, doxxing adjacent
+fuck you	harassment	high	directed profanity
+fuck off	harassment	medium	directed profanity, lower severity
+shut the fuck up	harassment	high	directed profanity
+piece of shit	harassment	high	directed insult
+scumbag	harassment	medium	insult
+moron	harassment	medium	insult
+idiot	harassment	medium	insult
+fuck	profanity	medium	undirected profanity
+fucking	profanity	medium	undirected profanity
+shit	profanity	medium	undirected profanity
+bastard	profanity	medium	undirected profanity
+asshole	harassment	medium	insult

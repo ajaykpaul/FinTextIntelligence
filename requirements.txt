@@ -1,0 +1,6 @@
+# Runtime: the service and all rule/provenance components run on the standard
+# library. Everything below is optional and selected via config.
+fastapi>=0.110
+uvicorn>=0.29
+onnxruntime>=1.17
+numpy>=1.26

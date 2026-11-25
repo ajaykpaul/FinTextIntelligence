@@ -1,0 +1,116 @@
+FinTextIntelligence v4.1 - quick start
+======================================
+
+Scores financial text (English and Arabic) for sentiment, toxicity, scam/misleading
+content and provenance, and turns it into a buy / sell / review signal. Runs on a
+normal laptop CPU. No GPU and no internet needed once installed.
+
+
+What you need
+-------------
+
+- macOS or Linux. On Windows, install WSL first (open PowerShell as admin, run
+  "wsl --install", restart) and do everything below inside the Ubuntu terminal.
+- Python 3.11 or newer. Check with:
+
+      python3 --version
+
+  If it's older or missing: on macOS install it from https://www.python.org/downloads/
+  (or "brew install python"); on Ubuntu/WSL run "sudo apt install python3 python3-venv python3-pip".
+- About 5 GB of free disk space.
+
+
+Step 1 - unzip
+--------------
+
+Put FinTextIntelligence-share.zip in a folder of your choice, open a terminal there and run:
+
+    unzip FinTextIntelligence-share.zip
+    unzip FinTextIntelligence-code-v4.1.zip
+    cd FinTextIntelligence
+    unzip ../FinTextIntelligence-model-v4.1.zip -d .
+
+You are now inside the project folder. Stay in it for all the steps below.
+
+
+Step 2 - install
+----------------
+
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install --upgrade pip
+    pip install -e '.[dev,onnx]'
+
+This takes a few minutes. Your prompt should now start with "(.venv)".
+
+
+Step 3 - test
+-------------
+
+    make test
+
+You should see all 625 tests pass. (If "make" isn't installed, use: python -m pytest -q)
+
+
+Step 4 - try it from the terminal
+---------------------------------
+
+    fintext --config configs/release_v4.1.toml demo
+
+This scores 8 built-in examples. To score your own sentence:
+
+    fintext --config configs/release_v4.1.toml score "Revenue missed consensus and the board cut guidance."
+
+The output should show negative sentiment and model_version shared-xlmr.v4.1.
+
+
+Step 5 - run the web page
+-------------------------
+
+    fintext --config configs/release_v4.1.toml serve
+
+Leave that terminal open and go to http://127.0.0.1:8080/ui in your browser.
+
+- Score tab: paste a headline (or click one of the "Try" samples) and press Score.
+- Waiting on a person: items the gate sent for a human decision.
+- Weekly review: draw a sample of flagged items and mark each flag right or wrong.
+
+Press Ctrl+C in the terminal to stop it.
+
+
+Next time
+---------
+
+You only install once. After that:
+
+    cd FinTextIntelligence
+    source .venv/bin/activate
+    fintext --config configs/release_v4.1.toml serve
+
+
+If something goes wrong
+-----------------------
+
+fintext: command not found
+    The venv isn't active. Run: source .venv/bin/activate
+
+ONNX artefact not found
+    The model zip wasn't unzipped inside the project folder. Repeat the last line of step 1.
+
+Results look odd / rule-based
+    You left out --config configs/release_v4.1.toml. Always include it.
+
+Port 8080 already in use
+    fintext --config configs/release_v4.1.toml serve --port 8090
+    then open http://127.0.0.1:8090/ui
+
+pip install fails
+    Check python3 --version is 3.11 or newer, then try again.
+
+
+Notes
+-----
+
+- The service has no login. Run it on your own machine; don't expose port 8080 to the internet.
+- The trained model is for non-commercial research and evaluation only. Please don't pass it on.
+- More detail (servers, retraining): INSTALL.txt and FinTextIntelligence-Documentation.pdf.

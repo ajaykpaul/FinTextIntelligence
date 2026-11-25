@@ -1,0 +1,265 @@
+Licence log
+===========
+
+Generated from fintext.catalogue. Every source used for training or evaluation
+appears here. No private, internal, customer or employee data is used anywhere in
+this project (PRD 3.2, 7).
+
+Production capture (items scored by this service)
+-------------------------------------------------
+  URL:           internal
+  Languages:     en, ar
+  Tasks:         sentiment, toxicity, misleading
+  Permitted:     train, eval
+  Licence:       none: third-party text submitted by callers
+  Status:        pending
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - PII-scrubbed at preprocessing before it is ever written
+    - only human-adjudicated items are used as training targets
+    - clear with legal before any fine-tune: the text is other people's
+
+Financial PhraseBank
+--------------------
+  URL:           https://huggingface.co/datasets/takala/financial_phrasebank
+  Languages:     en
+  Tasks:         sentiment
+  Permitted:     train, eval
+  Licence:       CC BY-NC-SA 3.0
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      fiqa_2018
+  Conditions:
+    - non-commercial research only; re-verify before any commercial pilot
+
+FiQA 2018 Task 1
+----------------
+  URL:           https://sites.google.com/view/fiqa
+  Languages:     en
+  Tasks:         sentiment
+  Permitted:     train, eval
+  Licence:       Open shared-task data
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      sec_edgar
+
+SEC EDGAR full-text search
+--------------------------
+  URL:           https://www.sec.gov/edgar/search
+  Languages:     en
+  Tasks:         sentiment, provenance
+  Permitted:     train, eval, provenance_index
+  Licence:       US Government public domain
+  Status:        cleared
+  Redistribute:  yes
+  Fallback:      -
+  Conditions:
+    - respect the published fair-access rate limits and user-agent policy
+
+GDELT raw data files
+--------------------
+  URL:           https://www.gdeltproject.org/data.html
+  Languages:     en, ar
+  Tasks:         sentiment, misleading
+  Permitted:     train, eval, backtest
+  Licence:       Open, attribution requested
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+Issuer investor-relations pages
+-------------------------------
+  URL:           https://www.bankfab.com/en-ae/investor-relations
+  Languages:     en
+  Tasks:         sentiment, provenance
+  Permitted:     eval, provenance_index
+  Licence:       Public web pages
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - robots.txt respected
+    - hand-labelled slice not redistributed
+
+Jigsaw Toxic Comment Classification
+-----------------------------------
+  URL:           https://www.kaggle.com/c/jigsaw-toxic-comment-classification-challenge
+  Languages:     en
+  Tasks:         toxicity
+  Permitted:     train, eval
+  Licence:       Kaggle competition data-use terms
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      wikipedia_talk
+  Conditions:
+    - competition rules bind derived artefacts; recorded in the model card
+
+Wikipedia Talk Labels: Toxicity
+-------------------------------
+  URL:           https://figshare.com/articles/dataset/Wikipedia_Talk_Labels_Toxicity/4563973
+  Languages:     en
+  Tasks:         toxicity
+  Permitted:     train, eval
+  Licence:       CC0 / open figshare release
+  Status:        cleared
+  Redistribute:  yes
+  Fallback:      -
+
+HateXplain
+----------
+  URL:           https://github.com/hate-alert/HateXplain
+  Languages:     en
+  Tasks:         toxicity
+  Permitted:     train, eval
+  Licence:       Repository licence recorded in the log
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+OSACT4 shared task (2020)
+-------------------------
+  URL:           https://edinburghnlp.inf.ed.ac.uk/workshops/OSACT4/
+  Languages:     ar
+  Tasks:         toxicity
+  Permitted:     train, eval
+  Licence:       Shared-task research terms
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+OSACT5 shared task (2022)
+-------------------------
+  URL:           https://aclanthology.org/2022.osact-1.20/
+  Languages:     ar
+  Tasks:         toxicity
+  Permitted:     train, eval
+  Licence:       Shared-task research terms
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+ArSAS
+-----
+  URL:           https://homepages.inf.ed.ac.uk/wmagdy/resources.htm
+  Languages:     ar
+  Tasks:         sentiment
+  Permitted:     eval
+  Licence:       Research terms
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+Financial PhraseBank and FiQA, machine-translated to Arabic
+-----------------------------------------------------------
+  URL:           https://huggingface.co/Helsinki-NLP/opus-mt-en-ar
+  Languages:     ar
+  Tasks:         sentiment
+  Permitted:     train
+  Licence:       Inherits CC BY-NC-SA 3.0 (PhraseBank) and the FiQA shared-task terms
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - derived from Financial PhraseBank and FiQA; their terms apply
+    - machine-translated, not native Arabic; reported as translate-train
+    - training only: Arabic sentiment is evaluated on ArSAS
+
+ArSarcasm-v2 (WANLP 2021 shared task)
+-------------------------------------
+  URL:           https://github.com/iabufarha/ArSarcasm-v2
+  Languages:     ar
+  Tasks:         sentiment
+  Permitted:     train
+  Licence:       MIT
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - tweets remain subject to the platform's terms; not redistributed here
+    - training only: Arabic sentiment stays evaluated on ArSAS, which shares no tweet
+
+L-HSAB (Levantine)
+------------------
+  URL:           https://github.com/Hala-Mulki/L-HSAB-First-Arabic-Levantine-HateSpeech-Dataset
+  Languages:     ar
+  Tasks:         toxicity
+  Permitted:     eval
+  Licence:       Research licence
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - evaluation only; dialect probe, not a training source
+
+ISOT Fake News Dataset
+----------------------
+  URL:           https://onlineacademiccommunity.uvic.ca/isot/
+  Languages:     en
+  Tasks:         misleading
+  Permitted:     train, eval
+  Licence:       Free research download
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      liar
+
+LIAR (PolitiFact statements)
+----------------------------
+  URL:           https://aclanthology.org/P17-2067/
+  Languages:     en
+  Tasks:         misleading
+  Permitted:     train, eval
+  Licence:       Research use
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+FakeNewsNet
+-----------
+  URL:           https://github.com/KaiDMML/FakeNewsNet
+  Languages:     en
+  Tasks:         misleading
+  Permitted:     train, eval
+  Licence:       Fetched via official scripts, per platform terms
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - hydrate with the official scripts only; never redistribute content
+
+PHEME rumours dataset
+---------------------
+  URL:           https://figshare.com/articles/dataset/PHEME_dataset_of_rumours_and_non-rumours/4010619
+  Languages:     en
+  Tasks:         misleading, provenance
+  Permitted:     train, eval
+  Licence:       Research licence (figshare)
+  Status:        cleared
+  Redistribute:  no
+  Fallback:      -
+
+SEC investor alerts
+-------------------
+  URL:           https://www.investor.gov/introduction-investing/general-resources/news-alerts
+  Languages:     en
+  Tasks:         misleading
+  Permitted:     rule_source
+  Licence:       US Government public domain
+  Status:        cleared
+  Redistribute:  yes
+  Fallback:      -
+
+Reddit (official API)
+---------------------
+  URL:           https://www.reddit.com/dev/api/
+  Languages:     en
+  Tasks:         sentiment, toxicity
+  Permitted:     backtest
+  Licence:       Reddit API terms, research use
+  Status:        cleared_with_conditions
+  Redistribute:  no
+  Fallback:      -
+  Conditions:
+    - never used in training
+    - never redistributed
+    - backtest realism only

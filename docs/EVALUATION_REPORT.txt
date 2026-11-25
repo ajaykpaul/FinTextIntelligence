@@ -1,0 +1,706 @@
+Evaluation report: shared-xlmr.v4.1
+===================================
+
+Current release: shared-xlmr.v4.1. Result: not accepted. Of the 14 gated criteria, 5
+pass on their point estimate, 6 fail on measurement and 3 can't be measured before a
+pilot. Of the 5 passes, the 3 model metrics sit inside their own 95% interval: on
+another test set of the same kind they could as easily fail (section 1, Intervals). This
+report says which is which, and why each failure happened, because "not accepted" covers
+very different situations: some targets miss by a hair, some are blocked by hardware,
+and one may not be reachable on its test data at all.
+
+v4.1 is v4 plus Arabic sentiment offsets tuned on dev, and only Arabic sentiment differs
+between the two. The sections below keep the history from v2 onward, because what each
+change did and didn't do is the evidence for the current numbers: section 1 for the
+model, section 3 for latency.
+
+  ----------------- ---------------------------------------------------------------------------------------------------------------------------------------
+  Model             shared-xlmr-20261119-1831, registered as shared-xlmr.v4 and shared-xlmr.v4.1
+  Setup             v3: run 2's settings, plus native Arabic sentiment tweets (ArSarcasm-v2) in training
+  Trained           2026-11-19, A100 80 GB, 17.0 min, 3 epochs, batch 32, fp16, seed 20240101
+  Data              85,892 train / 18,035 dev / 18,036 test; train fingerprint 6acad74b3fe2f5f2, dev + test 23732d3d72c04f50 (the same rows as v2 and v3)
+  Protocol          thresholds and offsets tuned on dev, every number below on test
+  Generated table   reports/acceptance_v4.1.txt, from reports/measured_metrics_v4.1.json
+  ----------------- ---------------------------------------------------------------------------------------------------------------------------------------
+
+To regenerate:
+fintext accept reports/measured_metrics_v4.1.json --model-version shared-xlmr.v4.1. The
+v2 table is kept in reports/acceptance_v2.txt.
+
+Acceptance summary
+------------------
+
+  Criterion                        Measured                                Target    Status                            Section
+  -------------------------------- --------------------------------------- --------- --------------------------------- ---------
+  English sentiment macro-F1       0.807 (0.770–0.845)                     ≥ 0.80    pass, within noise                1
+  English toxicity AUROC           0.953 (0.945–0.961)                     ≥ 0.95    pass, within noise                1
+  Arabic toxicity AUROC            0.909 (0.893–0.924)                     ≥ 0.92    fail, within noise                1
+  English toxicity F1              0.793 (0.767–0.818)                     ≥ 0.85    fail                              1
+  Arabic toxicity F1               0.710 (0.678–0.741)                     ≥ 0.80    fail                              1
+  English misleading F1            0.807 (0.787–0.825)                     ≥ 0.80    pass, within noise                1
+  EN–AR toxicity F1 gap            0.083 (0.044–0.125)                     ≤ 0.07    fail, within noise                1
+  Corroboration precision          1.000 (72/72; lower bound 0.949)        ≥ 0.95    pass, at the edge of its sample   2
+  Claim-extraction recall          0.934                                   ≥ 0.85    pass                              2
+  Pending resolves before expiry   not measurable                          ≥ 0.90    missing                           2
+  p95 latency, CPU, 256 tokens     60.5 ms (51.0–60.5 ms in one session)   ≤ 50 ms   fail                              3
+  Throughput per replica           26.8 rps (26.8–29.6 rps)                ≥ 100     fail                              3
+  English human-review precision   pilot only                              ≥ 0.90    missing                           4
+  Availability                     pilot only                              ≥ 0.995   missing                           3
+
+Model rows are the v4 run. Across the four runs of the v3 setup, which differ only in
+training seed (v3 seeds 1–3 and v4), the gates range:
+
+- English sentiment 0.801–0.819.
+- English toxicity AUROC 0.953–0.956.
+- Misleading F1 0.807–0.815.
+- Arabic AUROC 0.903–0.909.
+- Arabic F1 0.679–0.710.
+- Gap 0.083–0.123.
+
+English sentiment, English toxicity AUROC and misleading F1 pass on every seed, though
+narrowly. No seed reaches 0.92 Arabic AUROC or the 0.07 gap (section 1, "Native training
+data").
+
+Latency and throughput are the worst values from one session that alternated v3, v4 and
+v4.1 (reports/bench_v4_vs_v3.json). The machine slowed during that session for every
+version alike, which is why the range is wide. Within a round, the versions measure the
+same. The provenance rows don't depend on the model; they are unchanged from v2.
+
+Reported, never gated:
+
+- Arabic sentiment macro-F1 0.739 in v4.1 (0.728 in v4; 0.728–0.738 across the four
+  runs). It was 0.490 in v2 and 0.569 in v2.1, before native Arabic tweets were added to
+  training (section 1, Arabic sentiment).
+- Levantine toxicity AUROC 0.837 and F1 0.658, at the Arabic threshold.
+- Median time to corroboration: 0 s on the replay set (section 2).
+
+----------------------------------------------------------------------------------------
+
+1. Model quality
+----------------
+
+What the thresholds are
+
+Toxicity is tuned recall-first: the threshold keeps dev recall at 0.90 and takes the
+best F1 above that. The PRD also asks for 0.90 precision; for both languages no
+threshold met both, so recall won and the result is marked infeasible.
+
+  Threshold             Value   Dev precision   Dev recall   Dev F1   Best F1, any threshold
+  --------------------- ------- --------------- ------------ -------- ------------------------
+  Toxicity, English     0.633   0.733           0.913        0.813    0.813
+  Toxicity, Arabic      0.216   0.551           0.905        0.685    0.748
+  Misleading, English   0.365   0.774           0.875        0.821    0.821
+
+The last column matters more than the gate. Neither toxicity F1 target is reachable by
+choosing a threshold: the best dev F1 at any threshold is 0.813 for English (target
+0.85) and 0.748 for Arabic (target 0.80). Only a better model or cleaner labels can move
+them.
+
+Where the toxicity errors are
+
+Per dataset, from fintext.diagnose (step 9 of the training notebook), for the first
+model of this series; the full table and its reading are in ARABIC_TOXICITY.txt.
+
+- OSACT4 alone passes the Arabic AUROC gate (0.942). OSACT5 (0.854) pulls the combined
+  figure under 0.92, and the model underfits it even on its training rows.
+- English toxicity F1 is limited the same way: no English source reaches 0.85 at any
+  threshold (Jigsaw 0.79, Wikipedia Talk 0.83, HateXplain 0.81).
+- Labels: confident "errors" include tweets that read as plainly offensive but are
+  labelled not, and HateXplain posts containing racial slurs that all three annotators
+  marked "normal" (checked in the raw file). How much of the ceiling this accounts for
+  is unmeasured; the blind relabelling to measure it is built and documented in
+  LABEL_AUDIT.txt but needs an Arabic reader.
+
+What changed from the previous run
+
+Training and serving now read identical text (they didn't before: the service
+normalised, training read raw text), Arabic spelling variants are folded, and Arabic
+toxicity rows carry 1.5× loss weight. Everything else is the same: same seed, same caps,
+same split (identical train fingerprint, and the same 18,036 test rows, checked row by
+row).
+
+Paired against run 1 on those rows (fintext compare, below;
+reports/compare_run1_run2.json), B − A with 95% intervals:
+
+  Metric                       Run 1    Run 2   Difference   95% interval      Call
+  ---------------------------- -------- ------- ------------ ----------------- --------------------------
+  Arabic toxicity AUROC        0.896    0.907   +0.011       +0.004 – +0.017   run 2 better
+  Arabic toxicity F1           0.657    0.675   +0.018       +0.001 – +0.033   run 2 better, barely
+  Levantine toxicity AUROC     0.814    0.831   +0.017       +0.010 – +0.025   run 2 better
+  Levantine toxicity F1        0.624    0.650   +0.027       +0.018 – +0.036   run 2 better
+  English misleading F1        0.803    0.818   +0.015       +0.003 – +0.026   run 2 better
+  English sentiment macro-F1   0.7995   0.821   +0.021       −0.004 – +0.046   no detectable difference
+  English toxicity AUROC       0.954    0.951   −0.003       −0.006 – +0.000   no detectable difference
+  English toxicity F1          0.797    0.793   −0.003       −0.019 – +0.012   no detectable difference
+  EN–AR F1 gap                 0.139    0.118   −0.021       −0.043 – +0.003   no detectable difference
+  Arabic sentiment macro-F1    0.484    0.490   +0.006       −0.003 – +0.015   no detectable difference
+
+Run 1 is scored here as the service would serve it today, on normalised and folded text.
+That is the fair comparison for deployment, but run 1 never saw folded Arabic in
+training: on the raw text it was trained on, its Arabic F1 is 0.663 rather than 0.657
+(AUROC is the same either way, 0.896). The Arabic AUROC gain does not depend on this;
+the Arabic F1 gain is marginal under either reading.
+
+Training variance: the Arabic gain is within it. To tell a configuration effect from a
+lucky run, the run 2 configuration was trained three more times, changing only the
+training seed (head initialisation, batch order, dropout; the split is identical).
+reports/seed_variance.json:
+
+  Metric                     Run 1    Run 2   Seed 1   Seed 2   Seed 3   Run 2 config, mean ± sd
+  -------------------------- -------- ------- -------- -------- -------- -------------------------
+  Arabic toxicity AUROC      0.896    0.907   0.895    0.906    0.894    0.901 ± 0.007
+  Arabic toxicity F1         0.657    0.675   0.674    0.693    0.663    0.676 ± 0.013
+  Levantine toxicity AUROC   0.814    0.831   0.822    0.819    0.823    0.824 ± 0.005
+  English toxicity AUROC     0.954    0.951   0.953    0.952    0.954    0.952 ± 0.001
+  English toxicity F1        0.797    0.793   0.791    0.783    0.798    0.791 ± 0.006
+  English misleading F1      0.803    0.818   0.815    0.810    0.798    0.810 ± 0.009
+  English sentiment F1       0.7995   0.821   0.804    0.810    0.804    0.809 ± 0.008
+  EN–AR F1 gap               0.139    0.118   0.117    0.090    0.135    0.115 ± 0.019
+  Arabic sentiment F1        0.484    0.490   0.425    0.467    0.436    0.455 ± 0.030
+
+Three things follow.
+
+1.  Run 2 was the luckiest of four. Identically configured runs span 0.894 to 0.907
+    Arabic AUROC, and run 1's 0.896 sits inside that range. The paired test calls run 2
+    better than seeds 1 and 3 by about as much as it called run 2 better than run 1. So
+    the run 1 → run 2 Arabic AUROC gain is accounted for by training variance alone, and
+    the fixes are not shown to help it.
+
+2.  The paired test answers a narrower question than it seemed. It says whether one
+    trained model beats another on this test set, and it does that well. Whether one
+    configuration beats another needs several runs of each; one run per configuration
+    can't separate the configuration from the seed.
+
+3.  Settled with seeds of both setups. Run 1's setup (raw-text training, no Arabic
+    weight) was then trained three more times as well, so each setup has four runs.
+    intervals.compare_groups resamples the test rows and the runs within each setup
+    together, so its interval covers both the test sample and the seed
+    (reports/setup_comparison.json):
+
+      Metric                              Old setup, 4 runs     New setup, 4 runs     Difference (95%)            Call
+      ----------------------------------- --------------------- --------------------- --------------------------- ---------------
+      Arabic toxicity AUROC               0.898 (0.896–0.900)   0.901 (0.894–0.907)   +0.003 (−0.005 to +0.010)   no difference
+      Arabic toxicity F1                  0.672 (0.657–0.685)   0.676 (0.663–0.693)   +0.004 (−0.014 to +0.022)   no difference
+      Levantine toxicity AUROC            0.816 (0.812–0.823)   0.824 (0.819–0.831)   +0.008 (+0.000 to +0.015)   new better
+      Levantine toxicity F1               0.627 (0.624–0.629)   0.642 (0.634–0.650)   +0.015 (+0.006 to +0.025)   new better
+      EN–AR F1 gap                        0.126                 0.115                 −0.011 (−0.033 to +0.012)   no difference
+      English toxicity AUROC / F1         0.954 / 0.798         0.952 / 0.791         −0.002 / −0.006             no difference
+      English misleading / sentiment F1   0.809 / 0.806         0.810 / 0.809         +0.002 / +0.004             no difference
+      Arabic sentiment F1                 0.480                 0.455                 −0.025 (−0.062 to +0.006)   no difference
+
+    The fixes did not change Arabic toxicity, the thing they were for. The one
+    measurable effect is on Levantine, which is never trained on: about a point of AUROC
+    and 1.5 of F1. That fits the spelling fold (alef variants, repeated letters), which
+    matters most for dialectal spelling. The Arabic F1 direction that run 1 alone
+    suggested was run 1 being a low draw.
+
+For the gates: no run of the new configuration reaches 0.92 Arabic AUROC (best 0.907,
+mean 0.901), so "too close to call" on run 2 alone was generous. English sentiment,
+English toxicity AUROC and misleading F1 sit on their gates across seeds as well as
+across resamples: seed 3's misleading F1 is 0.798. Arabic sentiment varies most (±0.03),
+which fits its training data being machine translation.
+
+Run 2 stays the release candidate, but not because it scored best on test. Choosing
+among seeds by their test scores would make those scores optimistic; run 2 was chosen
+before the seeds were trained, and its numbers are reported alongside the spread.
+
+Intervals
+
+95% percentile intervals from 1,000 bootstrap resamples of the 18,036 test rows
+(fintext evaluate <run> --intervals 1000; reports/intervals_v2.json). The whole test set
+is resampled together, so the gap interval is paired. Thresholds are held at their
+dev-tuned values, so these intervals leave out threshold uncertainty and are, if
+anything, slightly narrow. Re-scoring on a different machine reproduced every point
+estimate and threshold to four decimal places.
+
+  Metric                       Point   95% interval    Target     Verdict
+  ---------------------------- ------- --------------- ---------- -------------------
+  English sentiment macro-F1   0.821   0.781 – 0.858   ≥ 0.80     too close to call
+  English toxicity AUROC       0.951   0.942 – 0.959   ≥ 0.95     too close to call
+  English misleading F1        0.818   0.800 – 0.835   ≥ 0.80     too close to call
+  Arabic toxicity AUROC        0.907   0.891 – 0.921   ≥ 0.92     too close to call
+  English toxicity F1          0.793   0.767 – 0.819   ≥ 0.85     fail
+  Arabic toxicity F1           0.675   0.641 – 0.704   ≥ 0.80     fail
+  EN–AR toxicity F1 gap        0.118   0.079 – 0.160   ≤ 0.07     fail
+  Arabic sentiment macro-F1    0.490   0.481 – 0.500   reported   
+  Levantine toxicity AUROC     0.831   0.816 – 0.846   reported   
+  Levantine toxicity F1        0.650   0.632 – 0.669   reported   
+
+"Too close to call" means the target lies inside the interval. Three things follow.
+Every model gate this release "passes" is one a second test set could fail. Arabic
+AUROC, which fails on its point estimate, could pass. And the three clear failures are
+clear: no plausible test set brings toxicity F1 or the gap within reach.
+
+English sentiment has the widest interval (±0.04) because it has the fewest test rows;
+its 0.80 gate is decided by a few dozen sentences.
+
+Comparing two runs
+
+Separate intervals are the wrong tool for "is run B better than run A". Both runs find
+the same rows hard, so most of the resampling noise is shared; looking at whether two
+separate intervals overlap ignores that and misses real differences.
+fintext compare <run A> <run B> resamples the test rows once per draw, scores both runs
+on that same draw, and puts the interval on B − A. Each run keeps its own dev-tuned
+thresholds, so the question is whether B as deployed beats A as deployed. The call is "B
+better", "A better" or "no detectable difference" (the interval on the difference
+contains zero); for the gap, lower is better.
+
+It refuses to pair runs unless they were tested on the same rows, checked by a per-row
+key (a digest of language, source and text; no text is stored) and by the labels. Runs
+whose splits differ can be compared with --common-rows on the rows both held out for
+test; those rows were unseen by both models, so the comparison is still fair, only
+smaller. Run 1 and run 2 share their split, so the result above is fully paired.
+
+Domain gap and disparity
+
+- Domain gap: unmeasured. Every number above is on public benchmarks (tweets, Wikipedia
+  comments, news). The hand-labelled issuer slice the PRD calls for does not exist yet,
+  so nothing here is measured on bank-channel text.
+- Dialect: Levantine Arabic (L-HSAB, never trained on) scores AUROC 0.831 and F1 0.650
+  at the MSA-tuned threshold, against 0.907 and 0.675 for the gated Arabic set.
+  Reported, not gated.
+- Arabic sentiment (0.490, reported, not gated): diagnosed below.
+
+Arabic sentiment
+
+Arabic sentiment is trained on machine translations of the English financial sets and
+tested on ArSAS, native tweets (9,339 test rows: 37% negative, 37% neutral, 23%
+positive). The head almost never answers "neutral" on them: run 2 predicts it 1,174
+times against 3,441 true, and neutral F1 is 0.30 (0.14–0.40 across runs and seeds).
+Almost all of the seed-to-seed spread in Arabic sentiment (0.425–0.490) is that one
+class. English neutral F1 is 0.85, so the head can learn the class; it learnt the
+translated-financial version of it.
+
+Two explanations predict different things. If the neutral probability still ranks
+neutral tweets above the rest but sits too low, a per-class offset chosen on dev fixes
+it, as a threshold does for toxicity. If it doesn't rank them, no decision rule can.
+fintext.sentiment_offsets measures both (reports/arabic_sentiment_offsets.json):
+
+                                                                Run 2                         Run 1
+  ------------------------------------------------------------- ----------------------------- -----------------------------
+  Neutral one-vs-rest AUROC                                     0.678                         0.636
+  Positive / negative AUROC                                     0.789 / 0.736                 0.760 / 0.753
+  Offsets tuned on ArSAS dev (log scale; negative fixed at 0)   positive −0.6, neutral +1.2   positive −1.1, neutral +0.6
+  Test macro-F1 without → with offsets                          0.490 → 0.569                 0.484 → 0.572
+  Paired difference, 95% interval                               +0.078 (+0.069 to +0.087)     +0.088 (+0.078 to +0.098)
+  Neutral F1 with offsets                                       0.53                          0.53
+
+Both, then. The offsets recover about eight points on both runs, tuned on dev and
+applied to test unchanged, so part of the problem is calibration. But neutral AUROC of
+0.64–0.68 is weak ranking: the head barely separates neutral tweets from opinionated
+ones, and no offset changes that. The rest needs native, in-domain Arabic sentiment in
+training. Using ArSAS dev to choose three numbers does make ArSAS less of an untouched
+check than it was; the test half is still never used for any choice.
+
+The 0.595 noted for an earlier zero-shot run was on a different split, so it isn't
+comparable to these numbers and isn't used here.
+
+Shipped as shared-xlmr.v2.1. The offsets are a decision rule for one artefact, like its
+thresholds, so they are registered with it: v2.1 is the same ONNX file as v2 plus Arabic
+offsets (positive −0.6, neutral +1.2), with v2 as its parent
+(fintext sentiment-offsets). The service adds them to the sentiment logits for Arabic
+only and renormalises, so the confidence floor still reads a probability. On 400 ArSAS
+test tweets the served model's label matched the offline decision on all 400, for both
+versions. Registered, not promoted: promotion is still blocked by latency (section 3),
+not by this.
+
+Native training data (v3). The offsets can't fix weak ranking, so the v3 setup adds
+ArSarcasm-v2 to training: 15,542 native tweets after removing 6 near-duplicates of
+held-out rows. It is train-only, and dev and test are unchanged (held-out fingerprint
+23732d3d72c04f50 in all three v3 manifests, the same as run 2's). Three seeds of v3 (T4,
+about 70 minutes each) were compared with the four v2 runs by intervals.compare_groups,
+which resamples test rows and seeds together (reports/v3_comparison.json):
+
+  Metric                                               v2, 4 runs              v3, 3 runs              Difference (95%)            Call
+  ---------------------------------------------------- ----------------------- ----------------------- --------------------------- ---------------
+  Arabic sentiment macro-F1                            0.455 (0.425–0.490)     0.734 (0.730–0.738)     +0.280 (+0.254 to +0.306)   v3 better
+  Arabic toxicity AUROC                                0.901                   0.905                   +0.005 (−0.004 to +0.014)   no difference
+  Arabic toxicity F1                                   0.676                   0.692                   +0.015 (−0.005 to +0.036)   no difference
+  Levantine toxicity AUROC / F1                        0.824 / 0.642           0.828 / 0.647           +0.004 / +0.005             no difference
+  EN–AR F1 gap                                         0.115                   0.106                   −0.009 (−0.037 to +0.019)   no difference
+  English toxicity AUROC                               0.952                   0.955                   +0.003 (+0.001 to +0.006)   v3 better
+  English toxicity F1 / misleading F1 / sentiment F1   0.791 / 0.810 / 0.809   0.797 / 0.812 / 0.809   all within ±0.006           no difference
+
+The ranking problem is what changed. Neutral one-vs-rest AUROC goes from 0.678 (run 2)
+to 0.905–0.918 across the v3 seeds, and positive and negative from 0.79 / 0.74 to 0.87 /
+0.92. The v3 seeds also agree with each other far better than the v2 seeds did: a spread
+of 0.008 against 0.065. Nothing else was harmed. English toxicity AUROC is three
+thousandths higher, too small to matter, and Arabic toxicity doesn't move, as expected,
+since no toxicity data was added.
+
+Is the gain real? A jump this size calls for checking for leakage first. Each ArSAS test
+tweet was compared with every ArSarcasm-v2 tweet by character 3–5-gram TF-IDF cosine.
+The highest match is 0.585, and only 4 of 9,339 are at or above 0.5. The top matches are
+YouTube "added a video to a playlist" boilerplate, not the same tweet. With those 4
+removed, every run's macro-F1 is unchanged to three decimals. fintext leakage-check
+(reports/v3_leakage_check.json) repeats this over every Arabic test row, toxicity tweets
+included, against the 15,542 rows actually trained on. 19 of 13,627 are at or above 0.5.
+They are stock phrases ("good morning", "there is no power but God", laughter), not
+copied tweets, and removing them moves no metric by more than 0.0007. So the gain is not
+the test set leaking into training; it is what native in-domain labels teach. The two
+datasets come from different collections: ArSarcasm-v2 is re-annotated from earlier
+tweet sets such as ASTD and SemEval-2017, and ArSAS comes from its own topic-driven
+crawl.
+
+Offsets on v3 are almost redundant. Re-tuned on each seed's own dev scores, they add
++0.004, +0.013 and +0.006 on test; only the middle one is clear of zero. The tuned
+values also disagree between seeds (neutral −0.2, +0.5, 0.0), which fits there being
+little left to calibrate. Against v2.1, run 2 with its offsets (0.569), each v3 seed
+with its own offsets scores 0.736–0.751. That is +0.167 to +0.182, with every paired
+interval clear of zero. Neutral F1 with offsets is 0.77–0.79, against 0.53 for v2.1.
+
+Registered as shared-xlmr.v3 and v3.1, not promoted.
+
+- Choosing the seed. Seed 2 was chosen on dev, not test. It has the best dev Arabic
+  sentiment (0.741), Arabic toxicity AUROC and F1 (0.917 / 0.713), EN–AR gap (0.105) and
+  English toxicity F1. Seed 1 is marginally ahead on dev English sentiment and
+  misleading F1.
+- Checking the weights. The weights were re-scored on dev and test on this machine. They
+  agree with the Colab scores on all 36,071 rows to within 1e-5 (the stored rounding),
+  with no sentiment label changed.
+- Export. Int8 failed parity again: sentiment scores moved by up to 0.099, and toxicity
+  by 0.053, against a 0.05 tolerance. So v3 is fp32, 4 threads, p95 47.6 ms for the
+  model alone on this machine, where v2 measured 50.5 ms. That gap is noise: measured
+  side by side on the full pipeline, the two are the same (section 3).
+- v3.1 adds Arabic sentiment offsets tuned on seed 2's dev scores (positive +1.3,
+  neutral +0.5). On test, macro-F1 goes from 0.738 to 0.751 (+0.007 to +0.020).
+- Serving matches the offline scores (fintext serving-parity,
+  reports/v3_serving_parity.json). On 400 random ArSAS test tweets, the served label
+  equals the offline one for 400 of 400 under both versions. On 300 other test rows,
+  toxicity and misleading scores differ from the PyTorch scores by at most 4e-6.
+
+Seed 2's test numbers on the gated metrics, with 95% intervals
+(artifacts/models/shared-xlmr-v3-seed2/intervals.json):
+
+- English sentiment 0.801 (0.760–0.840).
+- English toxicity AUROC 0.956 (0.948–0.963) and F1 0.800.
+- Arabic toxicity AUROC 0.908 (0.893–0.923) and F1 0.699.
+- Misleading F1 0.815.
+- EN–AR gap 0.101 (0.061–0.142).
+
+The acceptance verdict is the same as v2's. English sentiment passes, but only just: it
+is the lowest of the three v3 seeds there.
+
+Arabic sentiment stays reported, not gated. ArSAS is native tweets, not financial text,
+so this measures dialectal tweet sentiment, not Arabic financial sentiment.
+
+The release run: shared-xlmr.v4 (run shared-xlmr-20261119-1831). The v3 setup trained
+through the notebook's main path (steps 1–8), at the default seed, on an A100 in 17
+minutes. Step 5 confirmed the data: train fingerprint 6acad74b3fe2f5f2, the v3 seeds'
+set, and held-out 23732d3d72c04f50. Each step of docs/INTEGRATING_A_RUN.txt was run:
+
+- Re-scored here. All 36,071 dev and test rows agree with Colab within 4e-5, with no
+  label changed.
+- Against v3, paired on the same test rows (reports/v4_vs_v3.json):
+  - Arabic sentiment is 0.010 lower (0.728; −0.016 to −0.003).
+  - Levantine toxicity is higher: AUROC +0.011 (+0.003 to +0.018) and F1 +0.016 (+0.006
+    to +0.025).
+  - Nothing else is a detectable difference. Arabic toxicity F1 0.710 and the gap 0.083
+    lean better; misleading F1 0.807 leans worse.
+  - Several metrics sit just outside the three v3 seeds' range, in both directions. That
+    is a fourth seed of the same setup, not a different setup.
+- Leakage (reports/v4_leakage_check.json): the same 19 stock phrases as v3, and no
+  metric moves more than 0.0007 without them.
+- Export. Int8 failed parity again: sentiment 0.095, misleading 0.066. So v4 is fp32, 4
+  threads.
+- v4.1. Offsets tuned on dev (positive +0.6, neutral −0.2) take Arabic sentiment from
+  0.728 to 0.739 on test (+0.006 to +0.017).
+- Serving parity (reports/v4_serving_parity.json): 400 of 400 Arabic labels match under
+  both versions; scores within 4e-6.
+- Latency (reports/bench_v4_vs_v3.json): v4 and v3 alternated in one session measure the
+  same, within each round. The machine slowed during the session for every version (p95
+  about 50 ms in the first round, about 61 ms in the second), so only same-round
+  comparisons mean anything here.
+
+Gated numbers for v4 on test, with 95% intervals:
+
+  Metric                   v4                    Target
+  ------------------------ --------------------- --------
+  English sentiment F1     0.807 (0.770–0.845)   ≥ 0.80
+  English toxicity AUROC   0.953 (0.945–0.961)   ≥ 0.95
+  English toxicity F1      0.793 (0.767–0.818)   ≥ 0.85
+  Arabic toxicity AUROC    0.909 (0.893–0.924)   ≥ 0.92
+  Arabic toxicity F1       0.710 (0.678–0.741)   ≥ 0.80
+  Misleading F1            0.807 (0.787–0.825)   ≥ 0.80
+  EN–AR gap                0.083 (0.044–0.125)   ≤ 0.07
+
+The verdict is unchanged: the same gates pass and fail as for v2 and v3. v4 and v3 are
+interchangeable on this evidence. v4 is the run made through the standard path, and v3
+scores 0.010 higher on Arabic sentiment. Both are registered, and neither is promoted.
+
+2. Provenance
+-------------
+
+Replayed against cases built from real SEC filings (fintext replay-set). A genuine claim
+is the sentence of a company's own Exhibit 99.1 press release that names it and states
+the event, paired with the 8-K it was filed with. A fabricated claim is a copy with the
+company swapped for one whose filings can't support it, and which names no company that
+really filed about that kind of event nearby.
+
+  Set           Filed                Genuine   Fabricated   Used for
+  ------------- -------------------- --------- ------------ -----------------------------------------
+  Development   2022-01 to 2024-06   125       100          finding and fixing failures
+  Test          2024-07 to 2025-12   115       97           this report, run once after development
+
+The two sets share no filing; fintext replay --disjoint-from checks that and refuses to
+run otherwise.
+
+Result on the test set
+
+The index the service uses now holds each filing's text (fintext edgar --with-text), not
+only its 8-K item titles, so the replay gives every filing the same text: the first
+4,000 characters of the same document, fetched from the same URL
+(fintext replay-set --add-text). The claims and labels are unchanged.
+
+Each genuine claim was taken from its own filing, so a filing with text contains the
+claim almost word for word, which flatters recall. The headline row therefore removes
+each claim's own sentence from its filing first (fintext replay --hold-out-claim): the
+rest of the release has to support it, as it would a paraphrase in the news. That
+removed 91 of 115 sentences; the other 24 fall past the 4,000 characters kept, so they
+were never there to match.
+
+  Test set (115 genuine, 97 fabricated)   Genuine confirmed   Fabricated confirmed   Precision (95% lower bound)
+  --------------------------------------- ------------------- ---------------------- -----------------------------
+  Item titles only (previous index)       43                  0                      1.0 (0.918)
+  With filing text                        80                  0                      1.0 (0.954)
+  With text, claim sentence held out      72                  0                      1.0 (0.949)
+
+Claim-extraction recall is 0.934 in every row (it depends on the claim, not the filing).
+Before the item-3 work it was 0.665, with 33 genuine claims confirmed.
+
+The precision gate held throughout. Its lower bound is 0.949 on the headline row, so 72
+confirmations are not quite enough to show 0.95 even with no errors; that needs a larger
+set. Coverage is now 72 of 115: the remaining 43 are recognised and left pending or
+uncorroborated, mostly because the rest of the release doesn't repeat any particular of
+the claim (next section, item 6). Scored once, after the development work below.
+
+What changed, and how it was found
+
+Everything below was found and fixed on the development set. The test set was scored
+once, at the end. One caveat on that separation: the kinds of failure were first seen on
+the test set's earlier run, so the work was aimed at them; every specific rule was
+written and checked against the development set only.
+
+1.  The replay measured a weaker extractor than the one deployed. The service builds its
+    company vocabulary from the filing index (pipeline.py); the replay used a seven-name
+    table. The replay now does what the service does. This was a measurement bug, and
+    accounts for much of the recall change.
+2.  Tickers were matched in any case. With the index vocabulary in use, Agilent's ticker
+    "A" matched the article "a" in every sentence, and outranked the real company. This
+    was live in the service. Tickers and acronyms now match only as written, and names
+    only where they're capitalised.
+3.  Claim phrasing. Guidance verbs with words in between ("raised total company
+    guidance", "raising our full-year revenue and earnings outlook"), exchange
+    compliance notices ("deficiency letter", "delisting determination"), and longer
+    contract descriptions.
+4.  Generic filing words could confirm the wrong kind of claim. Once the extractor
+    recognised more companies, two fabricated contract awards on the development set
+    were confirmed by the same companies' acquisition filings: "item 1.01" and
+    "agreement" were enough. A filing now needs at least one word specific to the claim
+    type. This costs genuine confirmations wherever the only evidence is an item title,
+    which is the right side to err on.
+5.  Fabricated-case labels. One development-set "fabrication" still named the real
+    acquirer of the deal it described, so confirming it was correct. The builder now
+    rejects any fabrication that names a company with a genuine filing of that kind
+    nearby. Both sets were regenerated with the rule (no case in the test set was
+    affected).
+6.  Filing text let unrelated filings confirm fabricated claims. With text indexed,
+    three fabricated development claims were confirmed by the named company's own
+    filings about something else: an earnings release that mentioned guidance confirmed
+    a guidance quote from another company's chief executive, and a filing about one
+    acquisition confirmed a fabricated acquisition of a different target. Company, claim
+    type and date all matched; nothing particular to the claim did. A filing with text
+    must now also mention one of the claim's particulars: a name other than the
+    company's (a counterparty, a person) or an amount. Filings with only item titles
+    can't, so they are judged as before; the item-titles-only test result is
+    byte-for-byte unchanged. This was live in the service as soon as the index held
+    text. It cost 7 of 82 genuine development confirmations.
+
+Development numbers (125 genuine, 100 fabricated): item titles only 47 confirmed; with
+text 82 genuine and 3 fabricated before change 6, 83 and 0 after; with the claim held
+out, 74 and 0.
+
+Each change has unit tests (tests/test_claim_extraction.py, tests/test_replay_set.py,
+tests/test_edgar.py).
+
+What it can't measure
+
+Pending resolves before expiry: a press release is filed with its 8-K, so claim and
+evidence appear together. Measuring it needs news timestamped before the filing.
+
+Other fixes from the replay
+
+The replay engine checked every claim before delivering any document, which is wrong for
+any replay longer than one window; it now runs in time order. The EDGAR index builder
+mis-parsed filers with more than one listed class ("(BNZI, BNZIW)"). Both are fixed with
+regression tests. The shipped provenance index
+(artifacts/provenance/primary_index.jsonl) was rebuilt after the fix: 848 filings, 437
+with a ticker; entries with ticker text left in the company name went from 82 to 2, both
+of them genuine parts of a legal name.
+
+3. Service level
+----------------
+
+Measured on an Apple M5 (10 cores), ONNX Runtime 1.30, fp32, 4 intra-op threads, full
+pipeline, inputs padded to 256 tokens (reports/bench_v2_c1.json, _c2.json).
+
+  Concurrency   p50       p95       p99       Throughput
+  ------------- --------- --------- --------- ------------
+  1             50.4 ms   58.0 ms   61.2 ms   18.8 rps
+  2             52.6 ms   60.5 ms   65.8 ms   33.5 rps
+
+Re-measured with v3 (reports/bench_v3_vs_v2.json). The setup is the same as above, but
+v2, v3 and v3.1 were run alternately in two rounds in one session, so all three saw the
+same machine conditions:
+
+  Version   p95, concurrency 1   p95, concurrency 2   Throughput (c1 / c2)
+  --------- -------------------- -------------------- ----------------------
+  v2        51.2, 49.5 ms        49.8, 49.7 ms        23 / 34 rps
+  v3        50.4, 50.0 ms        50.3, 50.3 ms        23 / 33–34 rps
+  v3.1      49.7, 50.1 ms        50.7, 51.4 ms        23 / 33–34 rps
+
+- v3 is no faster or slower than v2. It is the same architecture at the same precision,
+  and the offsets in v3.1 are three additions. The model-only gap at export (47.6
+  against 50.5 ms) was run-to-run noise.
+- v2 now measures about 50 ms, not 58. That is v2 itself measured again, not a new
+  model, so the 58 ms reflected machine conditions at the time (background load or heat;
+  the cause wasn't recorded). The honest reading: on this Mac the full-pipeline p95 sits
+  right at the 50 ms target, landing either side of it from run to run. It doesn't pass
+  the target with any margin.
+- Throughput still fails clearly, at 33–34 rps against 100.
+
+So the conclusion below is unchanged.
+
+Model alone, by input length: 256 tokens p95 47–50 ms on 4 threads (61 ms on one); 64
+tokens 14 ms; 32 tokens 9 ms. Real headlines are nearer the short end.
+
+Why the targets miss here. The PRD's latency and throughput budgets assume an int8 model
+on an x86 server. On this ARM machine:
+
+- int8 failed the parity check: it moved misleading scores by up to 0.099 and sentiment
+  by 0.069 against a 0.05 tolerance, so thresholds tuned on the float model would not
+  have carried over. Per-channel quantisation and keeping the heads or the last 2–4
+  layers in fp32 all failed too.
+- int8 was also slower than fp32 here (p95 79 ms against 62 ms single-thread).
+
+So the served artefact is fp32, and the measurement is not on the reference hardware.
+The registry's latency gate refused to promote it (model-only p95 50.5 ms), and it was
+not forced.
+
+int8 on x86, measured. Notebook step 11 exported the v4 weights on a Colab Intel Xeon
+(2.2 GHz, 12 vCPUs, AVX-512 VNNI), with the same ONNX Runtime 1.30 as the Mac. The fp32
+export matched the run's own scores within 4e-6, so any shift is quantisation, not
+export.
+
+Eight dynamic int8 recipes were then compared with fp32 on 1,000 held-out rows, 500
+Arabic and 500 English, counting the decisions that flip at v4.1's thresholds and
+offsets. The data is in reports/int8_x86_colab.json, int8_x86_variants.json and the two
+ARM files.
+
+  Recipe                  What's quantised                                Flips on x86 (toxicity / misleading / sentiment)   Flips on ARM   x86 speed-up, 1 / 4 threads
+  ----------------------- ----------------------------------------------- -------------------------------------------------- -------------- -----------------------------
+  int8 (default)          everything                                      41 / 48 / 90                                       23 / 31 / 43   2.23× / 1.87×
+  per-channel             everything, per-channel weights                 46 / 38 / 99                                       21 / 17 / 39   not timed
+  int8_reduce_range       everything, 7-bit weights                       73 / 58 / 118                                      62 / 43 / 89   2.25× / 1.86×
+  uint8_weights           everything, unsigned weights                    48 / 41 / 81                                       50 / 37 / 77   0.99× / 0.97×
+  encoder_linear_only     72 encoder linears; embeddings and heads fp32   51 / 43 / 85                                       28 / 28 / 39   2.25× / 1.86×
+  ffn_only                24 feed-forward linears                         48 / 46 / 92                                       15 / 23 / 37   1.64× / 1.47×
+  ffn_only_reduce_range   the same, 7-bit                                 51 / 58 / 82                                       39 / 43 / 72   1.64× / 1.45×
+  ffn_up_only             12 first feed-forward linears                   12 / 17 / 33                                       11 / 7 / 23    1.17× / 1.11×
+
+Every recipe fails the five-sentence probe check. The closest is ffn_up_only, at 0.055
+against 0.05.
+
+What this shows:
+
+- The speed is real on x86. Default int8 roughly halves model-only p95 at 256 tokens:
+  488 → 219 ms on 1 thread, 151 → 79 ms on 4. On ARM the gain was only about 1.25×.
+  Colab's vCPUs are about 3× slower than the M5, so only the ratio transfers, not the
+  absolute times.
+- The accuracy isn't there. On x86, default int8 flips 9% of sentiment labels and 4–5%
+  of toxicity and misleading flags, about twice as many as on ARM.
+- The x86 fixes don't help. reduce_range is worse on both architectures, and unsigned
+  weights lose the speed. So the error isn't integer overflow.
+- Embeddings and heads aren't the cause. Keeping them fp32 changes nothing measurable.
+- Speed and accuracy pull against each other. The layers that buy the speed-up are the
+  ones that damage decisions: the attention projections, and the second feed-forward
+  layer, whose inputs vary the most. Quantising only the first feed-forward layer keeps
+  decisions closest, but it still flips 3.3% of sentiment labels on x86 and gains only
+  1.1×.
+
+So dynamic post-training int8 is ruled out for this model. What could still reach the
+targets is larger work:
+
+- outlier-aware quantisation: SmoothQuant-style static calibration, or
+  quantisation-aware fine-tuning;
+- a smaller distilled encoder;
+- a different latency budget or serving hardware.
+
+Until then the service stays fp32, and the latency and throughput gates stay failed.
+
+Availability needs a pilot.
+
+4. Human review
+---------------
+
+Not run: it needs a live pilot with at least 50 flagged alerts a week. The tooling
+exists (fintext review sample|decide|precision).
+
+5. Canary
+---------
+
+fintext --config configs/release_v4.1.toml canary: v4.1 at its own thresholds.
+
+  Technique                                             Recall
+  ----------------------------------------------------- ----------
+  plain, leetspeak, spacing, substitution, repetition   1.0 each
+
+One negative control is flagged, the same as for v2: "this stock is a bloodbath today",
+the market idiom the model card warns about. Ten items is a smoke test, not a
+measurement.
+
+The release demo shows the same kind of gap for misleading content. Two genuine
+headlines are flagged:
+
+- "Revenue missed consensus and the board cut its full-year guidance" (0.52);
+- "First Abu Dhabi Bank PJSC agreed to acquire a 40% stake in a regional lender" (0.83,
+  high priority).
+
+The head learnt "misleading" from political claims and fake news, so ordinary corporate
+news can score high. This is the domain gap that the in-domain test set (Future work,
+item 4) would measure.
+
+6. Week-three gate
+------------------
+
+Arabic toxicity F1 is 0.710 on test for v4 (dev 0.713), up from 0.675 for v2, and within
+the 0.679–0.710 range of the v3 setup's four runs. The scope decision this gate feeds is
+in ARABIC_TOXICITY.txt:
+
+- keep the AUROC gate;
+- report F1 with the per-dataset breakdown;
+- treat the absolute 0.80 as provisional until the label audit has measured what the
+  data allows.
+
+Future work
+-----------
+
+The project stops here, at shared-xlmr.v4.1. Each item below is a known next step, with
+what it would change, roughly what it costs, and why it wasn't done in this build.
+
+  #   Item                                                                                                       Would move                                                                                     Cost                                                     Why not done
+  --- ---------------------------------------------------------------------------------------------------------- ---------------------------------------------------------------------------------------------- -------------------------------------------------------- ----------------------------------------------------------------------------------------------------
+  1   A smaller encoder: drop to 6 layers and fine-tune, then distil from v4 if the accuracy loss is too large   p95 latency, throughput                                                                        1 A100 run for the simple form; a day for distillation   Dynamic int8 was ruled out late (section 3); this is the remaining route that keeps the CPU budget
+  2   Continued pre-training on unlabelled Arabic tweets                                                         Arabic toxicity AUROC and F1, the EN–AR gap                                                    a licensed tweet collection plus several A100 hours      needs a corpus that can be collected under its platform's terms
+  3   Label audit: 200 OSACT5 tweets, blind, two annotators (docs/LABEL_AUDIT.txt; the sample is drawn)          sets a defensible Arabic F1 target                                                             a few days of a fluent annotator's time                  needs a reader of Gulf and Egyptian Arabic
+  4   In-domain test set: hand-labelled issuer and bank-channel text                                             measures the domain gap (misleading-content false positives on corporate news, market idiom)   days of labelling                                        the public benchmarks are not financial text
+  5   Outlier-aware quantisation: static SmoothQuant-style calibration, or quantisation-aware fine-tuning        latency and throughput, if int8 can be made accurate                                           research-sized                                           seven dynamic recipes failed on two architectures (section 3)
+  6   A latency budget decision for the PRD owner: more cores per replica, a GPU, or a looser p95                latency and throughput, with no model change                                                   a requirements decision                                  not an engineering choice
+  7   Pilot measurements: pending-before-expiry, human-review precision, availability                            the 3 missing gates                                                                            a live pilot                                             can't be measured offline
+
+The release tooling is in place for any of these:
+
+- docs/INTEGRATING_A_RUN.txt lists the steps a new run goes through.
+- fintext compare-groups, leakage-check and serving-parity decide whether a change
+  helped.
+- Notebook steps 10 (seeds) and 11 (int8 on x86) cover repeat measurements.

@@ -1,0 +1,152 @@
+FinTextIntelligence v4.1 - use cases and test cases
+===================================================
+
+Last run: 24 Nov 2026, against shared-xlmr.v4.1 (release config), on a MacBook CPU.
+
+Before testing, start the service:
+
+    fintext --config configs/release_v4.1.toml serve
+
+and open http://127.0.0.1:8080/ui. Every test below can be done in the browser.
+The API versions use curl, e.g.
+
+    curl -s -X POST http://127.0.0.1:8080/v1/signal \
+         -H 'content-type: application/json' \
+         -d '{"text": "Net profit rose 18% and the company raised its dividend.", "profile": "trading"}'
+
+
+Part 1 - use cases
+------------------
+
+UC1  Trader checks a headline
+     Who:   someone on a trading desk, or an automated strategy.
+     How:   paste the headline, profile "trading", press Score.
+     Gets:  a signal (BUY / SELL / REVIEW) plus sentiment and confidence. Neutral news
+            comes back as a "routine" review, i.e. nothing to trade.
+
+UC2  Compliance screens a social post
+     Who:   compliance / moderation team.
+     How:   paste the post, profile "compliance".
+     Gets:  toxicity (with sub-types and the words that triggered it), scam patterns
+            highlighted in the text, and anything risky sent to "Waiting on a person".
+
+UC3  Checking whether a market-moving claim is confirmed
+     Who:   analyst.
+     How:   paste a claim about a company (merger, guidance, contract...).
+     Gets:  provenance state. "pending" means no filing has been seen yet; after the
+            window closes it becomes "corroborated" or "uncorroborated".
+
+UC4  Arabic content
+     Who:   anyone. Paste Arabic text; it's detected automatically and shown right-to-left.
+     Gets:  sentiment and toxicity. Misleading-content check is English only and shows
+            as "not run".
+
+UC5  Scoring an article from a link
+     How:   paste just the URL. The page is fetched and the article text is scored.
+     Note:  needs internet; some publishers block it, in which case the app offers the
+            headline taken from the URL instead.
+
+UC6  A person decides on gated items
+     Who:   reviewer. Tab "Waiting on a person".
+     How:   enter your name, then Accept: buy, Accept: sell, or Reject. Each decision is
+            saved with your name and becomes a training label for the next model.
+
+UC7  Weekly quality check
+     Who:   reviewer. Tab "Weekly review".
+     How:   Draw this week's sample, then mark each flag Correct / Not correct / Unsure.
+     Gets:  measured precision per language (target: 90% or more for English).
+
+UC8  Another system calls the API
+     How:   POST /v1/score or /v1/signal with JSON. GET /v1/config shows the thresholds
+            in use, GET /readyz shows whether the model is loaded.
+
+
+Part 2 - test cases
+-------------------
+
+Result column is what we actually got on the last run. "Pass" = matches expected.
+
+Sentiment and signal (profile: trading)
+
+  ID    Input                                                        Expected                     Result
+  ----  -----------------------------------------------------------  ---------------------------  ------------------------------------
+  T01   Liabilities fell sharply in the third quarter as the group   positive, BUY                positive 93%, BUY - Pass
+        repaid debt.
+  T02   Net profit rose 18% and the company raised its dividend.     positive, BUY                positive 98%, BUY - Pass
+  T03   Revenue missed consensus and the board cut its full-year     negative                     negative 93% - Pass (see note 1)
+        guidance.
+  T04   The company will publish its results on Tuesday.             neutral, routine review      neutral 97%, REVIEW routine - Pass
+  T05   ترتفع أسهم بنك أبوظبي الأول بعد نمو الأرباح                     ar, positive, BUY            ar, positive 98%, BUY - Pass
+        (FAB shares rise after profit growth)
+  T06   تراجعت أرباح الشركة وخسائر كبيرة في الربع الثالث                 ar, negative, SELL           ar, negative 96%, SELL - Pass
+        (profits fell, big losses in Q3)
+
+T01 is the important one: a generic sentiment model calls "fell sharply" negative. Here
+falling liabilities is correctly read as good news.
+
+Scams, abuse and claims (profile: compliance unless noted)
+
+  ID    Input                                                        Expected                     Result
+  ----  -----------------------------------------------------------  ---------------------------  ------------------------------------
+  T07   Guaranteed 300% returns. Act now, only 3 slots left, send    misleading, urgent review    flagged; rules guaranteed_returns +
+        USDT to our wallet.                                                                       urgency_plus_payment; REVIEW now - Pass
+  T08   Official verified account of FAB: verify your account,       misleading, urgent review    flagged; rule bank_impersonation;
+        share your OTP.                                                                           REVIEW now - Pass
+  T09   You are a pathetic clown and I will k1ll you.                toxic (threat)               toxic 0.99, lexicon match on "k1ll"
+                                                                                                  - Pass (see note 2)
+  T10   Thanks for the update, see you at the earnings call.         not toxic, no flags          not toxic, no flags - Pass
+  T11   First Abu Dhabi Bank PJSC agreed to acquire a 40% stake in   provenance pending,          pending, REVIEW now - Pass
+        a regional lender.  (trading)                                review                       (see note 1)
+  T12   Arabic text (T05)                                            misleading "not run"         skipped: English-only - Pass
+
+Input handling and API
+
+  ID    What                                                         Expected                     Result
+  ----  -----------------------------------------------------------  ---------------------------  ------------------------------------
+  T13   Phone number and email in the text: "Call me on             replaced before scoring      "Call me on [PHONE] or email
+        +971 50 123 4567 or email john.smith@example.com ..."                                     [EMAIL] ..." - Pass
+  T14   Empty text (only spaces)                                     400, clear error             400 "text must be a non-empty
+                                                                                                  string" - Pass
+  T15   Unknown field in the request ({"colour": "red"})             400, not silently ignored    400 "unknown fields: ['colour']"
+                                                                                                  - Pass
+  T16   Only "sentiment" ticked under Capabilities                   others shown as skipped      toxicity/misleading/provenance
+                                                                                                  "not requested" - Pass
+  T17   Very long text (~9,000 characters)                           scored, marked truncated     200, truncated = true - Pass
+  T18   GET /readyz after start                                      ready                        {"status": "ready"} - Pass
+  T19   GET /v1/config                                               v4.1 thresholds              shared-xlmr.v4.1.dev-tuned,
+                                                                                                  0.645 / 0.253 / 0.468 - Pass
+  T20   Speed                                                        under 50 ms per item         6-12 ms per item - Pass
+
+Human review screens (do these by hand in the browser)
+
+  ID    Steps                                                        Expected
+  ----  -----------------------------------------------------------  -------------------------------------------------
+  T21   Score T07, open "Waiting on a person", click Accept: buy     "Enter your name first." - nothing is saved
+        without a name.
+  T22   Type a name, click Reject.                                   "Saved: rejected ... by <name>", item leaves the
+                                                                     queue, resolved count goes up by one.
+  T23   "Weekly review" -> Draw this week's sample, mark an item     batch counter moves on; "Measured precision"
+        Correct.                                                     card appears.
+  T24   Paste a URL to a news article (needs internet).              "Fetched" card shows the page title and the
+                                                                     article text is what gets scored.
+
+
+Notes / known issues
+--------------------
+
+1. Misleading-content false positives. T03 (ordinary bad earnings news) and T11 (a
+   normal deal announcement) are both marked "needs review" by the misleading model,
+   so they go to a person instead of producing a SELL / a held BUY. This is the
+   limitation listed in the model card: the English misleading head over-flags
+   plain negative or claim-like news. It's safe (a person looks at it) but noisy.
+
+2. T09 also comes back as SELL at 85%. The trading gate only looks at sentiment,
+   provenance and the misleading flag, not toxicity, so an abusive post with negative
+   tone produces a sell signal. In practice abusive posts shouldn't be fed to the
+   trading profile, but it's worth knowing.
+
+3. Running these tests adds items to "Waiting on a person" (the urgent reviews from
+   T03, T07, T08, T11). Reject them afterwards if you don't want them hanging around.
+
+4. The automated suite (make test, 625 tests) covers the same ground without the
+   model and without a network, and should be run before any change is shipped.

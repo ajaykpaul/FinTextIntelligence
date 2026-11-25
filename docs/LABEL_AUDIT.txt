@@ -1,0 +1,72 @@
+OSACT5 label audit: how to annotate
+===================================
+
+This measures how often OSACT5's offensive / not-offensive labels are wrong. It needs
+one person who reads Gulf and Egyptian Arabic comfortably. A second, independent
+annotator makes the result much stronger, so use two if you can, each with their own
+copy of the sheet.
+
+The files
+---------
+
+    data/interim/label_audit/osact5/sheet.csv   ← give this to the annotator
+    data/interim/label_audit/osact5/key.json    ← the original labels; don't open it until scoring
+
+Both are under data/, which is never zipped or uploaded: the tweets are covered by the
+shared task's research terms.
+
+sheet.csv has 200 tweets in random order. Half were labelled offensive by the original
+annotators and half were not, but nothing in the sheet says which. Open it in Google
+Sheets or Excel (it's UTF-8, so the Arabic shows correctly).
+
+What to fill in
+---------------
+
+  column      what to write
+  ----------- -------------------------------------------------------------
+  offensive   1 if the tweet is offensive, 0 if it isn't
+  unsure      1 if you genuinely can't decide; leave offensive empty then
+  note        optional: a word on why, for anything borderline
+
+Leave item and text alone. Rows marked unsure are counted but kept out of the rate.
+
+What counts as offensive
+------------------------
+
+Use the shared task's own definition, not your own sense of what's acceptable. The point
+is to check whether the labels follow the dataset's rules, so the rules have to be the
+same ones.
+
+A tweet is offensive if it contains any of:
+
+- an insult or attack aimed at a person or group, explicit or implied (name-calling,
+  "dog", "donkey", mocking someone's looks or intelligence)
+- vulgar or obscene language, including profanity used for emphasis
+- a curse or wish for harm aimed at someone ("الله ياخذك")
+- hate speech: attacks based on religion, race, ethnicity, gender, nationality, social
+  class or disability
+
+A tweet is not offensive if it is:
+
+- criticism or disagreement without insult ("this decision is wrong")
+- strong emotion with no target ("I'm so angry today")
+- an emoji alone, even 😡 or 👊, unless the words make it an attack
+- reporting or quoting offensive language in order to condemn it
+
+Placeholders like @USER, URL and <LF> were added by the dataset; ignore them.
+
+Go with your first reading. Don't look tweets up, don't search for context, and don't go
+back to change earlier answers after seeing later ones. Two hundred tweets take about an
+hour and a half.
+
+Scoring
+-------
+
+From the project folder:
+
+    PYTHONPATH=src python3 -m fintext.cli label-audit score data/interim/label_audit/osact5/sheet.csv
+
+With two annotators, score each sheet separately. It prints the agreement with the
+original labels, Cohen's kappa, the two kinds of flip with 95% intervals, and the
+estimated noise rate for the whole corpus (reweighted from the 50/50 sample to OSACT5's
+real 35.5% offensive).

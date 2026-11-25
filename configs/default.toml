@@ -1,0 +1,84 @@
+# Service configuration.
+#
+# Every value here is part of a release: the digest of this file travels on each
+# response as lineage.config_digest, so a flag raised in production can be
+# traced to the thresholds that produced it. Override one field from the
+# environment with, for example, FINTEXT_TOXICITY_EN=0.4.
+#
+# Acceptance targets are NOT here. They are PRD constants, not per-deployment
+# settings, and live in fintext/evaluation.py.
+
+# --- latency (PRD 8.3) ---
+max_tokens = 256              # hard cap on the hot path (PRD 6.6)
+timeout_ms = 75.0
+trading_budget_ms = 50.0
+compliance_budget_ms = 500.0  # read by a person (PRD 5.1)
+research_budget_ms = 2000.0
+p95_target_ms = 50.0
+
+# --- thresholds ---
+threshold_version = "thresholds.v1"
+toxicity_en = 0.35
+toxicity_ar = 0.30
+misleading = 0.50
+misleading_high_priority = 0.75
+min_sentiment_confidence = 0.45
+
+# --- provenance (PRD 6.3) ---
+min_match_score = 0.82
+recheck_seconds = 60
+index_stale_seconds = 3600
+index_path = "artifacts/provenance/primary_index.jsonl"
+
+# --- lexicons and models ---
+lexicon_dir = "artifacts/lexicons"
+lexicon_en = "en_high_severity.v1.txt"
+lexicon_ar = "ar_osact_published.v1.txt"
+lexicons_enabled = true
+# "heuristic" needs no artefacts and is the CI default; switch to "onnx" once a
+# model is promoted to the registry.
+backend = "heuristic"
+registry_path = "artifacts/registry"
+model_version = "shared-xlmr.v0-heuristic"
+# Threads per inference. Four keeps a 256-token request under the 50 ms p95 on
+# the machine it was measured on; one does not (see Config.onnx_threads).
+onnx_threads = 4
+
+# --- the trading gate (PRD 5.2, 6.4) ---
+# Below this confidence the gate stands aside rather than guessing a direction.
+signal_min_confidence = 0.60
+# An unconfirmed claim costs conviction. It is never suppressed: the fastest
+# genuine news is indistinguishable from it (PRD 6.4).
+pending_conviction = 0.85
+# A hold is off by default. Against a 20 ms budget, holding for anything
+# meaningful is suppression wearing a different name. Raise it only for a
+# consumer that can actually afford to wait.
+pending_hold_ms = 0
+
+# --- resolving a pasted link ---
+# A URL on its own is fetched and the article scored. Off the latency path, and
+# refused for anything that is not a public http(s) address.
+fetch_urls = true
+fetch_timeout_s = 8.0
+fetch_max_bytes = 2000000
+
+# --- serving ---
+host = "127.0.0.1"
+port = 8080
+# An outage removes the trading gate rather than halting trading; the compliance
+# queue backs up rather than passing unscreened content (PRD 8.3).
+fail_open = ["trading", "research"]
+fail_closed = ["compliance"]
+decision_log = "reports/decision_log.jsonl"
+review_dir = "reports/review"   # weekly human-review batches and decisions (PRD 8.4)
+max_batch = 512
+shadow_every = 0
+
+# Corroboration windows in seconds, per claim type. Disclosure clocks differ:
+# regulator and exchange notices appear almost immediately, issuer releases
+# within minutes, filing-backed events may take hours.
+[windows]
+regulatory = 900
+guidance = 3600
+merger = 7200
+contract = 10800

@@ -1,0 +1,21 @@
+{
+  "sentiment_macro_f1_en": 0.826,
+  "sentiment_macro_f1_ar": 0.612,
+  "toxicity_auroc_en": 0.961,
+  "toxicity_auroc_ar": 0.934,
+  "toxicity_f1_en": 0.871,
+  "toxicity_f1_ar": 0.812,
+  "misleading_f1_en": 0.818,
+  "cross_language_f1_gap": 0.059,
+  "corroboration_precision": 0.971,
+  "claim_extraction_recall": 0.883,
+  "pending_resolves_before_expiry": 0.924,
+  "human_review_precision_en": 0.918,
+  "human_review_precision_ar": 0.869,
+  "latency_p95_ms_cpu": 38.4,
+  "throughput_rps_per_replica": 143.0,
+  "availability": 0.9962,
+  "week_three_arabic_toxicity_f1": 0.742,
+  "dialect_slices": 0.771,
+  "median_time_to_corroboration": 268.0
+}

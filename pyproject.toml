@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fintext"
+version = "1.5.0"
+description = "Multilingual financial text intelligence: sentiment, toxicity, misleading-content and provenance signals for trading and compliance"
+readme = "README.txt"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "FinTextIntelligence" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Serving extras. The service runs on the standard library alone; these
+# only swap in faster / more featureful implementations.
+serve = ["fastapi>=0.110", "uvicorn>=0.29", "pydantic>=2.6"]
+onnx = ["onnxruntime>=1.17", "numpy>=1.26"]
+train = [
+  "torch>=2.2",
+  "transformers>=4.40",
+  "datasets>=2.19",
+  "scikit-learn>=1.4",
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "pyarrow>=15",
+]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.4", "mypy>=1.10"]
+
+[project.scripts]
+fintext = "fintext.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+fintext = ["py.typed", "static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["fintext"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+
+# torch.onnx imports onnxscript when it is installed (the ONNX export path needs
+# it), and onnxscript pulls in onnx_ir, whose TypeGuard annotations crash mypy
+# 1.17 while writing its cache ("Cannot serialize TypeGuardedType"). Neither is
+# our code, so mypy does not follow them.
+[[tool.mypy.overrides]]
+module = ["onnxscript.*", "onnx_ir.*"]
+follow_imports = "skip"

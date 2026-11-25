@@ -1,0 +1,26 @@
+Lexicon changelog
+=================
+
+A lexicon change is a release (PRD 6.5). Every entry records the version, the row count,
+the content digest and the provenance of the change.
+
+en_high_severity.v1 — initial
+-----------------------------
+
+- Rows: 20 (3 controlled-list placeholders, 17 committed terms).
+- Provenance: in-house curation.
+- Reviewed by: service owner.
+- Notes: slur entries are held in the ops-managed controlled list and appear here as
+  __slur_placeholder_N__. Matching, override and audit paths are identical for
+  placeholder and real entries.
+
+ar_osact_published.v1 — initial (integration placeholder)
+---------------------------------------------------------
+
+- Rows: 4 placeholders.
+- Provenance: to be populated from the lexicon distributed with the OSACT shared-task
+  literature. Not curated in-house — the developer does not read Arabic (PRD 11).
+- Reviewed by: pending native-speaker review hours (week five).
+- Notes: the file is versioned and wired end to end; it carries no verified Arabic terms
+  until the published list is dropped in and this entry is amended with the source
+  citation, licence and digest.

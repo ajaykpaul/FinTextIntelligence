@@ -1,0 +1,198 @@
+Runbook
+=======
+
+Operational procedures for the scoring service. Availability target is 99.5% during the
+pilot, set below a standard 99.9% because a single developer is not an on-call rotation
+(PRD 8.3). The design accommodates that rather than pretending otherwise: a 75 ms
+timeout budget, fail-open for trading, fail-closed for compliance, and managed hosting
+with automatic restart covering unattended periods.
+
+Contents
+--------
+
+1.  Deploy
+2.  Health and readiness
+3.  Alerts and what to do about them
+4.  Promoting a model
+5.  Rolling back
+6.  Changing a lexicon
+7.  Changing a threshold
+8.  Provenance windows
+9.  Weekly jobs
+10. Incident: auditing a specific flag
+
+----------------------------------------------------------------------------------------
+
+Deploy
+------
+
+    docker build -t fintext:$(git rev-parse --short HEAD) .
+    docker run -p 8080:8080 fintext:$(git rev-parse --short HEAD)
+
+Statelessness is the primary design decision (PRD 9): scale horizontally, no session
+affinity, no cache coherence. The only in-process state is the provenance tracker, and
+losing it costs pending claims their history, not correctness, because claims
+re-register from the stream.
+
+Health and readiness
+--------------------
+
+  Endpoint          Meaning
+  ----------------- ------------------------------------------------------
+  GET /healthz      The process is alive. Does not depend on the model.
+  GET /readyz       ready, ready_degraded (warm-up failed), or starting.
+  GET /metrics      Prometheus exposition.
+  GET /v1/metrics   JSON snapshot including per-stage p95 and drift.
+  GET /v1/model     Serving lineage and the registry pointers.
+
+ready_degraded is deliberately a 200. Holding every replica out of rotation turns a
+degraded service into a dead one, and for trading an outage should remove the gate
+rather than halt trading. Compliance still receives 503s per request, and its queue
+backs up as intended.
+
+Alerts
+------
+
+  Alert                               Meaning                                                                                Action
+  ----------------------------------- -------------------------------------------------------------------------------------- -----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  p95 > 50 ms sustained               The SLO is breached.                                                                   Check stage_p95_ms in /v1/metrics to attribute it to a stage. If it is inference, roll back to the previous artefact; a promotion should not have passed the CI gate. If it is provenance, the index has grown; rebuild it.
+  fintext_degradations_total rising   Capabilities are being dropped.                                                        If provenance only, the budget is tight: check upstream latency. If everything, the backend is failing; see fintext_errors_total{kind="inference"}.
+  fail_open outcomes rising           Trading is receiving unscored responses.                                               Treat as an outage even though nothing is returning errors. This is the failure mode that hides.
+  Compliance 503s                     Working as designed: the queue is backing up rather than passing unscreened content.   Restore scoring. Do not switch compliance to fail-open to clear the queue.
+  drift_psi > 0.2                     Input or prediction distribution has shifted.                                          Compare languages and input-length distributions against the baseline. A shift in the language mix usually means an ingestion filter changed, not that the model moved.
+  Canary recall drop > 5 points       Obfuscated abuse is getting through.                                                   Triggers a retraining review (PRD 8.4). Check by_technique first: a single technique points at the lexicon folding, a broad drop points at the model.
+  Decision-log drops > 0              The audit trail is losing records.                                                     Disk or throughput problem. The log drops rather than blocking scoring by design; fix the sink, do not disable the log.
+
+Promoting a model
+-----------------
+
+Promotion is gated on measured latency and refuses anything above the objective (PRD
+6.6).
+
+    make bench                             # measure; fails if an SLO is missed
+    fintext registry list
+    fintext registry promote shared-xlmr.v3
+
+Order of operations for a new artefact:
+
+1.  Train → artifacts/models/<run>/manifest.json carries the metrics.
+2.  export_and_register exports, quantises, verifies float/int8 parity, benchmarks and
+    registers. Parity failure aborts the export: thresholds tuned on the float model
+    would not transfer.
+3.  Run the acceptance harness against the frozen splits. A gated criterion that was not
+    measured fails.
+4.  Shadow the candidate for at least a day: fintext registry shadow <version>. Shadow
+    needs no latency gate, since its responses are discarded.
+5.  Promote.
+
+--force bypasses the latency gate for the incident case only. It stamps
+[forced promotion] into the entry notes, because an ungated promotion is exactly what an
+audit needs to be able to find.
+
+Rolling back
+------------
+
+    fintext registry list                  # find the previous active version
+    fintext registry promote <previous>
+
+Artefacts are immutable, so the previous version is byte-identical to what was serving
+before. fintext registry show <version> prints its recorded metrics and parent chain.
+
+Changing a lexicon
+------------------
+
+A lexicon change is a release (PRD 6.5).
+
+1.  Edit the list under artifacts/lexicons/, bumping the .vN suffix.
+2.  Add a CHANGELOG.txt entry: row count, digest, provenance, reviewer.
+3.  Point configs/default.toml at the new filename.
+4.  Run make test and make canary. A lexicon edit is the change most likely to move
+    canary recall.
+5.  Deploy. The new version string appears in every response's lineage.lexicon_versions,
+    so flags before and after are distinguishable.
+
+The Arabic list is not curated here. Replace it from the published OSACT distribution
+and record the citation, licence and digest in the changelog.
+
+Changing a threshold
+--------------------
+
+Thresholds live in configs/default.toml and are part of the release. For an emergency
+change, FINTEXT_TOXICITY_EN=0.45 overrides one field, and the config digest changes with
+it, so the override is visible in the lineage of every response it affected. Follow up
+with a real release; an environment override that outlives the incident is an
+undocumented threshold.
+
+Provenance windows
+------------------
+
+Windows are derived from observed confirmation times and documented, never set at
+runtime (PRD 6.3). To recalibrate:
+
+    fintext replay data/samples/provenance_replay.jsonl
+
+Read median_time_to_corroboration_seconds per claim type and set the window above the
+observed median with margin. Then confirm pending_resolves_before_expiry ≥ 0.90 and,
+more importantly, corroboration_precision ≥ 0.95; widening a window trades precision for
+recall on the wrong side if the index is noisy.
+
+An unconfigured claim type raises rather than falling back to a default. A silent
+default would be a window nobody chose.
+
+Weekly jobs
+-----------
+
+  Job                  Command                               Gate
+  -------------------- ------------------------------------- -----------------------------------------------------
+  Adversarial canary   make canary                           Recall drop > 5 points triggers a retraining review
+  Human review         make review then the /ui review tab   English precision ≥ 90%
+  Drift review         GET /v1/metrics                       PSI > 0.2 investigated
+  Provenance replay    make replay                           Corroboration precision ≥ 0.95
+
+The weekly human review in full
+
+    fintext review sample --days 7 --size 50      # draw a reproducible batch
+
+Then work through it in the /ui Weekly review tab, or from the terminal with
+fintext review list and fintext review decide <alert_id> <verdict>.
+
+The reviewer answers one question, was this flag correct, and never whether the content
+should be blocked. The service reports and the policy layer decides; a review surface
+offering block/allow would move that decision to the wrong place. unsure is a real
+answer: it is excluded from the precision denominator rather than forced into a call,
+and a run of them is the signal that the native-speaker hours are needed.
+
+    fintext review precision --metrics reports/measured_metrics.json
+
+That writes the measured value into the file the acceptance harness reads, so
+fintext accept gates on a number someone actually reviewed rather than one typed in by
+hand. It exits non-zero when English precision is below 90%.
+
+    fintext review export -o reports/review.csv
+
+Spreadsheet export, which the PRD says is sufficient for the MVP.
+
+Two things the report will tell you that matter more than the headline number:
+
+- "below the 50-item weekly minimum": the sample fell short of PRD 8.4. Either the week
+  was quiet or the log is not being written; check fintext review list against the alert
+  volume in /v1/metrics.
+- "spans multiple lineages": the batch straddles a model, lexicon or threshold change,
+  so one precision figure across it is two numbers averaged. Review per release.
+
+Arabic alerts are reviewed via machine translation and their precision is reported with
+that qualification rather than gated. Translation separates clear cases reliably and
+ambiguous ones poorly, and ambiguous items are what the native-speaker review hours
+exist for.
+
+Auditing a flag
+---------------
+
+Every response carries the lineage needed to reproduce it. Given an item id:
+
+    grep '"id": "<item-id>"' reports/decision_log.jsonl | python -m json.tool
+
+The record gives the model version, lexicon versions, threshold version, rules version
+and config digest. fintext registry show <model-version> resolves the artefact; the
+lexicon version string carries the row count and content digest. For a provenance flag,
+GET /v1/provenance/<claim_id> returns the full transition history with timestamps.

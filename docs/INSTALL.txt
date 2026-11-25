@@ -1,0 +1,136 @@
+Install and run FinTextIntelligence
+===================================
+
+The packages
+------------
+
+  Package                              Contents                                                                                                                  Size      Share?
+  ------------------------------------ ------------------------------------------------------------------------------------------------------------------------- --------- --------------------------------------------------------------------------------------
+  FinTextIntelligence-code-v4.1.zip    the whole project: code, tests, configs, docs, reports, model registry, the training notebook                             1.6 MB    yes
+  FinTextIntelligence-model-v4.1.zip   the trained model: pytorch_model.bin (.pt weights), tokenizer, the served ONNX file, metrics                              2.2 GB    privately only: non-commercial research and evaluation (MODEL_PACK.txt)
+  FinTextIntelligence-data-v4.1.zip    the training and evaluation data: publisher downloads (data/raw/) and every source's rows as JSON lines (data/sources/)   ~0.3 GB   no: for your own machines only; most licences forbid passing it on (LICENCE_LOG.txt)
+  train_colab.ipynb                    the training notebook, also inside the code package at notebooks/                                                         40 KB     yes
+  INSTALL.txt                          this guide, also inside the code package at docs/                                                                                   yes
+
+The model and data packages unzip into the project folder. Their paths (artifacts/…,
+data/…) mirror the project's, so there's nothing to move.
+
+1. Requirements
+---------------
+
+- Python 3.11 or newer. Tested on 3.13.
+- macOS, Linux, or Windows with WSL.
+- About 5 GB of free disk for serving, and 8 GB with the training data.
+- For serving, a CPU is enough. Four cores give about 50 ms per 256-token item.
+- For training, an NVIDIA GPU: an A100 takes 17 minutes, a T4 about 70.
+
+2. Laptop: install and run
+--------------------------
+
+    unzip FinTextIntelligence-code-v4.1.zip                      # creates FinTextIntelligence/
+    cd FinTextIntelligence
+    unzip ../FinTextIntelligence-model-v4.1.zip -d .             # adds artifacts/models/… and artifacts/onnx/…
+    python3 -m venv .venv && source .venv/bin/activate           # optional, keeps it separate
+    pip install -e '.[dev,onnx]'
+
+Check the model files arrived intact. Both should match MODEL_PACK.txt:
+
+    shasum -a 256 artifacts/onnx/shared-xlmr.v4.onnx artifacts/models/shared-xlmr-20261119-1831/pytorch_model.bin
+
+On Linux, use sha256sum instead of shasum -a 256.
+
+Then run it:
+
+    make test                                              # 625 tests, no network
+    fintext --config configs/release_v4.1.toml demo        # scores 8 built-in examples with the trained model
+    fintext --config configs/release_v4.1.toml score "Revenue missed consensus and the board cut guidance."
+    fintext --config configs/release_v4.1.toml serve       # the service and the browser UI
+
+In the browser, open http://127.0.0.1:8080/ui. Paste a headline, pick a profile (trading
+or compliance) and score it. The Weekly review tab is the human-review loop. The JSON
+API is at POST /v1/score, and GET /v1/config shows the live thresholds.
+
+Always pass --config configs/release_v4.1.toml. Without it, fintext runs the rule-based
+reference backend, which needs no model, with that backend's thresholds.
+
+3. Remote server
+----------------
+
+Install exactly as in section 2, then keep the service running in the background:
+
+    nohup fintext --config configs/release_v4.1.toml serve > fintext.log 2>&1 &
+
+It listens on 127.0.0.1:8080, the server's own loopback. The service has no login, so
+don't open it to the internet. Reach it from your laptop through an SSH tunnel:
+
+    ssh -N -L 8080:127.0.0.1:8080 you@your-server
+
+Then open http://127.0.0.1:8080/ui on the laptop. If other machines on a private network
+need it, add --host 0.0.0.0, and only behind a firewall or a reverse proxy that does
+authentication.
+
+To start it at boot (systemd), create /etc/systemd/system/fintext.service:
+
+    [Unit]
+    Description=FinTextIntelligence
+    After=network.target
+
+    [Service]
+    WorkingDirectory=/opt/FinTextIntelligence
+    ExecStart=/opt/FinTextIntelligence/.venv/bin/fintext --config configs/release_v4.1.toml serve
+    Restart=on-failure
+    User=fintext
+
+    [Install]
+    WantedBy=multi-user.target
+
+Then enable it:
+
+    sudo systemctl daemon-reload && sudo systemctl enable --now fintext
+
+4. Training the model again
+---------------------------
+
+On Google Colab: the route the release was trained on
+
+1.  Put FinTextIntelligence-code-v4.1.zip in My Drive, renamed to
+    FinTextIntelligence.zip. The notebook finds the newest one.
+2.  Open train_colab.ipynb in Colab. Choose Runtime → Change runtime type → A100 (or
+    T4).
+3.  Run steps 1 to 8. Step 5 loads the data and stops if it isn't exactly the release's:
+    train fingerprint 6acad74b3fe2f5f2, dev and test 23732d3d72c04f50. Step 6 trains.
+4.  The run is saved to My Drive/fintext-runs/<run name>/. Download that folder and
+    bring it in with the steps in INTEGRATING_A_RUN.txt: import, re-score, compare,
+    leakage check, export, offsets, serving parity, benchmark.
+
+Optional steps:
+
+- step 10 trains more seeds;
+- step 11 measures int8 against fp32 on Colab's x86 CPU.
+
+On your own GPU server
+
+    cd FinTextIntelligence
+    unzip ../FinTextIntelligence-data-v4.1.zip -d .        # data/raw/ and data/sources/
+    pip install -e '.[train,onnx,dev]'
+    export HF_TOKEN=...                                    # optional; anonymous downloads also work
+    fintext train                                          # the release setup: 3 epochs, batch 32, seed 20240101
+
+- Data. The publisher downloads in data/raw/ are used as they are. The Hugging Face
+  sources (FinancialPhraseBank, FiQA, Jigsaw, LIAR, ArSAS, ArSarcasm-v2, OSACT5)
+  download on first use and are cached.
+- Settings. The CLI's defaults are the release's, including the native Arabic tweets.
+- Output. The run lands in artifacts/models/<run name>/. Then follow
+  INTEGRATING_A_RUN.txt from step 2.
+
+5. If something goes wrong
+--------------------------
+
+  Symptom                                                       Cause and fix
+  ------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------
+  fintext: command not found                                    not installed: run pip install -e '.[dev,onnx]' in the project folder. Or use PYTHONPATH=src python3 -m fintext.cli …
+  ONNX artefact not found: artifacts/onnx/shared-xlmr.v4.onnx   the model pack isn't unzipped into the project folder
+  scores look like the rule-based demo, not the model           --config configs/release_v4.1.toml is missing
+  the onnx backend needs onnxruntime                            install the extra: pip install -e '.[onnx]'
+  EDGAR commands return 403                                     SEC asks for a contact: set FINTEXT_SEC_CONTACT to your email in your own shell before running fintext edgar or fintext replay-set
+  port 8080 in use                                              fintext --config configs/release_v4.1.toml serve --port 8090

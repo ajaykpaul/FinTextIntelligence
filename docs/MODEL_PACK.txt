@@ -1,0 +1,53 @@
+Model pack: shared-xlmr.v4.1
+============================
+
+The code archive never carries model weights, because of their size and their licence
+terms (below). The trained model ships separately as FinTextIntelligence-model-v4.1.zip,
+about 2.2 GB. Its paths mirror the project, so installing it is one unzip into the
+project folder.
+
+Contents
+--------
+
+  File                                                                                  What it is                                                             SHA-256
+  ------------------------------------------------------------------------------------- ---------------------------------------------------------------------- ------------------------------------------------------------------
+  artifacts/models/shared-xlmr-20261119-1831/pytorch_model.bin                          the trained PyTorch weights (XLM-R base, four heads)                   293adf3e2fc7946efa5df04d40f8e399b5af663890e832cb36c0f7453c7327f9
+  artifacts/models/shared-xlmr-20261119-1831/tokenizer.json, tokenizer_config.json      the tokenizer it was trained with                                      
+  artifacts/models/shared-xlmr-20261119-1831/manifest.json                              training config, data provenance, fingerprints, metrics                
+  artifacts/models/shared-xlmr-20261119-1831/metrics_frozen_test.json, intervals.json   test metrics and 95% intervals, re-scored on the Mac                   
+  artifacts/models/shared-xlmr-20261119-1831/scored_dev.jsonl, scored_test.jsonl        per-row scores (no text), for fintext compare and the release checks   
+  artifacts/onnx/shared-xlmr.v4.onnx                                                    the served fp32 ONNX export, the artefact registered as v4 and v4.1    ba004651d38fcdfa929bed071cb8fde31916a3271b651e5231027e7142f9ef85
+
+The registry entries (artifacts/registry/index.json) are in the code archive. v4.1 is
+the same ONNX file as v4, plus Arabic sentiment offsets.
+
+Install and run
+---------------
+
+    unzip FinTextIntelligence-model-v4.1.zip -d FinTextIntelligence/
+    cd FinTextIntelligence
+    pip install -e '.[dev,onnx]'
+    shasum -a 256 artifacts/onnx/shared-xlmr.v4.onnx    # should match the table above
+    fintext --config configs/release_v4.1.toml demo
+    fintext --config configs/release_v4.1.toml serve     # http://127.0.0.1:8080/ui
+
+Use configs/release_v4.1.toml, not the default config. It carries v4.1's dev-tuned
+thresholds (toxicity 0.645 English and 0.253 Arabic, misleading 0.468). The default
+config's thresholds belong to the heuristic backend, and tests/test_release_config.py
+fails if the two drift apart.
+
+Inference needs only onnxruntime. The .pt file is for re-scoring
+(fintext evaluate artifacts/models/shared-xlmr-20261119-1831), re-exporting, or further
+training. That needs the train extra and the training data.
+
+Licence
+-------
+
+The weights are derived from the training sets listed in LICENCE_LOG.txt:
+
+- FinancialPhraseBank, and its Arabic translation, is CC BY-NC-SA 3.0.
+- FiQA and the OSACT shared tasks bind derived artefacts by their terms.
+
+So the pack is for non-commercial research and evaluation only, it is shared privately,
+and it must not be published or redistributed. Any commercial pilot means re-verifying
+those terms first.

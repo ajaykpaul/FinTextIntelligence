@@ -1,0 +1,110 @@
+Bringing a Colab run into the project
+=====================================
+
+The steps a trained run goes through on the Mac before it is written up or registered.
+Each one is a fintext command, so every run is checked the same way. Run them from the
+project folder with PYTHONPATH=src python3 -m fintext.cli ..., written fintext ...
+below.
+
+<run> is the run's folder name, for example shared-xlmr-20261120-0930. The next main run
+registers as shared-xlmr.v4, and as v4.1 if offsets help. Registry versions are never
+overwritten, so a new run always gets a new name.
+
+1. Import
+---------
+
+Download My Drive/fintext-runs/<run>/ from Drive; Drive zips it. Then:
+
+    fintext import-model ~/Downloads/<the zip>.zip
+
+The importer refuses unsafe paths, a missing weights file, or a run name that already
+exists.
+
+2. Re-score here
+----------------
+
+    fintext evaluate artifacts/models/<run> --intervals 1000
+
+This rebuilds the split from the manifest and refuses if either fingerprint differs. It
+re-scores dev and test from pytorch_model.bin and writes the 95% intervals. Its metrics
+should match the numbers Colab printed in step 7, to rounding. If they don't, the
+weights aren't the model the results came from: stop there.
+
+It takes about 20 minutes on the M5. Keep the Mac awake and plugged in.
+
+3. Compare
+----------
+
+One run can't be judged as a setup on its own, because seeds alone move Arabic sentiment
+by about 0.01 and Arabic toxicity AUROC by about 0.013. Check two things:
+
+- Same model quality as v3? Do a paired comparison against the registered v3 run, and
+  check that every metric falls within or near the v3 seed range (in
+  reports/v3_comparison.json):
+
+      fintext compare artifacts/models/shared-xlmr-v3-seed2 artifacts/models/<run> --out reports/<run>_vs_v3.json
+
+- A setup change? If the run changed the setup, train at least two seeds of it and
+  compare the groups:
+
+      fintext compare-groups --a artifacts/models/shared-xlmr-v3-seed{1,2,3} --b <its runs> --out reports/<name>.json
+
+4. Leakage check
+----------------
+
+Needed whenever training includes a train-only native source.
+
+    fintext leakage-check artifacts/models/<run> --out reports/<run>_leakage.json
+
+For v3: 19 of 13,627 Arabic test rows were at or above 0.5. They were stock phrases, and
+removing them moved no metric by more than 0.0007. A new run with the same data should
+look the same.
+
+5. Export and register
+----------------------
+
+    fintext export artifacts/models/<run> --version shared-xlmr.v4
+
+This tries int8 first. On this ARM Mac int8 has failed parity for every run so far, and
+when it fails nothing is registered. Then use full precision:
+
+    fintext export artifacts/models/<run> --version shared-xlmr.v4 --fp32
+
+Move the rejected shared-xlmr.v4.int8.onnx out of artifacts/onnx/ first.
+
+6. Sentiment offsets
+--------------------
+
+    fintext sentiment-offsets artifacts/models/<run> --language ar --from-version shared-xlmr.v4 --as-version shared-xlmr.v4.1
+
+The offsets are tuned on dev. The command registers v4.1 only if they clearly help on
+test.
+
+7. Serving parity
+-----------------
+
+    fintext serving-parity artifacts/models/<run> --versions shared-xlmr.v4 shared-xlmr.v4.1 --out reports/<run>_serving_parity.json
+
+It exits non-zero unless every sampled Arabic label matches the offline decision, and
+toxicity and misleading scores agree within 1e-4.
+
+8. Benchmark
+------------
+
+Run it side by side with the current version, alternating, in one session. The machine's
+conditions move p95 by several milliseconds (58 ms against 50 ms for the same v2).
+
+    for v in shared-xlmr.v3 shared-xlmr.v4 shared-xlmr.v3 shared-xlmr.v4; do
+      FINTEXT_BACKEND=onnx FINTEXT_MODEL_VERSION=$v fintext bench --iterations 300 --concurrency 1
+    done
+
+9. Write up and share
+---------------------
+
+- Update the evaluation report and the model card.
+- Rebuild the zip with bash make_archive.sh. It refuses if licensed data or weights get
+  in.
+- Upload the zip to Drive.
+
+Don't promote a version unless it passes the registry's latency gate. Never
+force-promote one.

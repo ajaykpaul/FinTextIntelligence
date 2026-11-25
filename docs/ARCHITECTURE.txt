@@ -1,0 +1,263 @@
+Architecture
+============
+
+The shape of the system follows from two constraints in the PRD, and almost every
+structural decision below traces back to one of them: scoring must complete inside a 50
+ms p95 on CPU, and Arabic commitments may only be made where native-speaker-labelled
+public benchmarks supply the evidence.
+
+Request path
+------------
+
+                                       ┌──────────────────────────────┐
+     schedulers                        │  ScoringPipeline (stateless) │
+     ──────────                        │                              │
+     EDGAR    ─┐                       │  1 preprocess                │
+     GDELT    ─┼─► primary index ──────┤     normalise, language id,  │
+     issuer IR ┘   (JSONL / parquet)   │     PII scrub, 256-token cap │
+                                       │  2 inference  (one encoder,  │
+     caller ──► HTTP / gRPC ──► fetch ─►│     four heads, int8 ONNX)   │
+                  (a bare link only)   │                              │
+                                       │  3 lexicon floor  (override) │
+                                       │  4 scam rules     (parallel  │
+                                       │     to the model, not after) │
+                                       │  5 provenance     (index)    │
+                                       └───────────┬──────────────────┘
+                                                   │
+                            ┌──────────────────────┼──────────────────────┐
+                            ▼                      ▼                      ▼
+                      decision log            monitoring             provenance
+                      (JSONL, async)          (Prometheus)           tracker
+
+A bare link is fetched before any of this and outside the budget: the article behind it
+becomes the text, and the 50 ms clock starts after. The address is checked first
+(http/https, resolved to a public address, three redirects at most), and a link the
+caller should not have sent is a 400, while a publisher refusing us is a 502 with the
+headline off the URL offered as a way forward.
+
+Why this order
+
+- Preprocessing first, always. Every span in every response indexes into its output, and
+  PII is removed before the text reaches storage or the log rather than on the way out.
+- The lexicon floor runs after the model, not instead of it. It overrides a score; it
+  does not replace the model. This is the only place in the system where a rule beats a
+  model, and it exists because the cost of missing a slur or a direct threat in a
+  bank-branded channel is not symmetric with the cost of a false positive.
+- Scam rules run independently of the misleading head. If the head regresses or is cut
+  to rules-only under the week-three gate, this coverage is untouched (PRD 11).
+- Provenance runs last. It is the only stage that touches an index and the only one
+  whose answer changes after the response is sent.
+
+Statelessness
+-------------
+
+Statelessness is the primary design decision (PRD 9): it reduces the latency objective
+to horizontal scaling with no cache coherence and no session affinity.
+
+The one exception is the provenance tracker, and it is a deliberate one. Corroboration
+is a state that changes over time, so something has to hold open claims. It is derived
+state: losing it costs pending claims their transition history, not correctness, because
+claims re-register from the stream. The store is bounded, so a burst of breaking news
+cannot grow it without limit.
+
+Latency budget
+--------------
+
+The 50 ms objective is spent, not hoped for. Each stage checks the remaining budget
+before it starts; a stage that will not fit is dropped and named in degraded. A late
+answer is worth less to a trading gate than a partial one on time.
+
+  Decision                                  Reason
+  ----------------------------------------- ----------------------------------------------------------------------------------------------------------------
+  Batch size one on the hot path            The SLO is per-item latency, not throughput
+  Single-threaded ONNX Runtime              Intra-op parallelism buys throughput at the cost of exactly the tail the SLO measures
+  Hard 256-token cap at preprocessing       A safety bound ahead of the model tokenizer; not configurable upward
+  Attribution only when the budget allows   Occlusion costs one forward pass per token: affordable at 500 ms, not at 50 ms
+  Warm-up before readiness                  The first inference on a cold graph costs several times steady state, and would breach the SLO on every deploy
+
+Degradation
+-----------
+
+The two policies are not interchangeable, and the choice is made from config, never from
+the caller:
+
+  Profile             On failure                                              Rationale (PRD 8.3)
+  ------------------- ------------------------------------------------------- -----------------------------------------------------------
+  trading, research   Fail open: HTTP 200, every capability marked degraded   An outage removes the gate rather than halting trading
+  compliance          Fail closed: HTTP 503                                   The queue backs up rather than passing unscreened content
+
+The response distinguishes degraded (should have run, did not) from skipped (was never
+going to run: out of language scope, or not requested). A consumer that conflated them
+would read every Arabic request as a partial outage, since the misleading-content flag
+is English-only.
+
+The provenance state model
+--------------------------
+
+                  ┌───────────────────┐
+                  │  not_applicable   │  no checkable claim
+                  └───────────────────┘
+
+      claim ──►  pending ──────────────► corroborated  (terminal)
+                    │                        ▲
+                    │ window elapsed         │ a document arrives late
+                    ▼                        │
+               uncorroborated ───────────────┘
+
+- corroborated is terminal. Once a primary document supports the claim, nothing later
+  withdraws it, since re-opening would let a stale-index blip erase a correct
+  resolution.
+- uncorroborated is not terminal. The window is calibrated to normal confirmation times,
+  not to a deadline after which evidence stops counting.
+- An ambiguous entity or a stale index holds the claim pending and never resolves it
+  either way. Manufacturing the signal-bearing state out of the service's own outage
+  would be the worst available behaviour.
+- No state asserts falsity. pending is the normal condition of breaking news;
+  uncorroborated is the state that routes to human review.
+
+The trading gate
+----------------
+
+The scorer measures and stops. signal.py is the piece that commits: one call per item
+(buy, sell or review) with the reason attached. The rules are the PRD's own (5.2, 6.4),
+read top to bottom, first match wins:
+
+1.  Scoring failed → no call at all. direction=None, gated=False, and the strategy
+    proceeds as if the gate were absent. Fail-open (8.3) as a signal.
+2.  Flagged as likely misleading → review, priority="now".
+3.  Confirmation window closed with nothing found → review, priority="now". This is the
+    state that carries signal (6.4).
+4.  Too close to call → review, priority="now".
+5.  Nothing directional → review, priority="routine".
+6.  Otherwise buy or sell at the model's confidence. Pending confirmation costs a
+    haircut and optionally a hold; it never costs the call.
+
+Rules 4 and 5 both produce a review call, and the difference between them is the whole
+point. A borderline reading needs a person. A routine notice is a clear answer that
+there is nothing to trade, and it sits at the bottom of the queue. Measured on a
+realistic stream, collapsing the two puts about 70% of items in front of a reviewer;
+keeping them apart puts 9% there.
+
+It lives in its own module and behind its own route because PRD 3.2 keeps trading
+strategy out of scope, and that boundary is worth keeping. A gate picks a side. Strategy
+picks size, instrument and timing, and carries a different blast radius. Nothing in a
+/v1/score reply can express an action; only /v1/signal can.
+
+Cost is about 1.3 µs on an already-scored item, so the gate is free against either the
+50 ms CPU or 20 ms GPU budget.
+
+Where a gated call goes
+-----------------------
+
+review used to be the end of the road: the call said "a person looks at this" and there
+was nowhere for that person to look. It now lands in an approval queue (approvals.py),
+ordered urgent-first, and stays there until somebody accepts it as a buy or a sell, or
+rejects it outright.
+
+Accepting names a side on purpose. The gate withheld a direction because it did not have
+one; an accept that did not supply one would move the ambiguity downstream rather than
+resolve it. Every resolution records the wait, which is the number a desk actually cares
+about, not how many items went to a person, but how long they sat there.
+
+     signal.decide() ──► buy / sell ─────────────────► the desk
+                     └─► review ──► approval queue ──► person ──► buy / sell / no trade
+                                         │                             │
+                                         └── waited_ms ────────────────┴──► training label
+
+Those resolutions, plus the weekly review verdicts, are the only labels the production
+corpus has (corpus.py). Model outputs are captured but never used as targets: training
+on your own predictions reinforces mistakes instead of correcting them, and the eval
+numbers drift along with the model so nothing shows it happening.
+
+The public corpora come in through corpora.py, which keeps one rule the rest of the
+design depends on: sources declared eval in the catalogue are appended to the held-out
+splits after the shuffle and never enter training. ArSAS is one: the PRD declares it a
+sanity check for the cross-lingual sentiment head. That head trains on
+machine-translated copies of the English sets, which join training only where their
+English originals are in training, so the Arabic score is always measured on native
+Arabic the model never saw. PRD 8.1 reports it rather than gating it.
+
+Why compact encoders, and not an LLM
+------------------------------------
+
+This is the decision most likely to be reopened, so the reasoning is recorded here
+rather than left implicit. It is PRD 6.1, which reads in full only in v1.4; v1.5 reduces
+the section to the words "BERT-scale models".
+
+- Selection is driven by the latency budget. These are narrow classification tasks, and
+  a large language model does not fit a 50 ms hot path.
+- BERT-scale models quantise to int8 and run in tens of milliseconds on CPU at 256
+  tokens. That is the whole serving strategy in one line.
+- They produce calibrated probabilities suitable for thresholding, which a gate
+  requires. This is why thresholds are tuned against explicit recall and precision
+  floors rather than fixed by hand: the tuning only means anything if the scores are
+  calibrated in the first place.
+- They provide token-level attributions that can be archived for audit. This is why
+  spans ride on every flag, into the decision log, and onto the review screen.
+- An LLM adds latency, cost and prompt-injection surface without a demonstrated accuracy
+  advantage on tasks of this scope.
+
+The last point is the only mention of prompt injection in either version of the PRD, and
+it matters more here than the latency argument does. This service ingests adversarial
+text by definition (scam solicitations, impersonation attempts, abuse), and the whole
+design assumes that text is data to be scored, never instructions to be followed. A
+generative model in the scoring path would turn hostile input into a control surface.
+Nothing in this system interprets the text it scores; it measures it.
+
+Model architecture
+------------------
+
+One XLM-R encoder, four heads (PRD 6.2). The choice is as much about schedule as about
+accuracy: adding a head costs days rather than weeks, and there is one training
+pipeline, one quantisation pass, one artefact to deploy and monitor.
+
+Mixed-corpus batches carry a per-task mask, because English toxicity, Arabic toxicity,
+English sentiment and English misleading-content come from different corpora with
+different labels. Without masking, the English-only head learns to detect English.
+
+The FinBERT challenger replaces the shared English-sentiment head only if it beats it by
+more than two F1 points, the point at which a permanent increase in maintenance surface
+is justified.
+
+Backends
+--------
+
+  Backend     Role
+  ----------- ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  Heuristic   Reference implementation of the contract. No artefacts, no ML dependencies. What CI, the acceptance harness and the fail-open fallback run. Not the deliverable model.
+  Onnx        int8 ONNX Runtime on CPU. The production hot path.
+
+Both return the same Scores, so the pipeline never branches on backend. The heuristic
+backend being genuinely usable is what lets the whole service (API, rules, provenance,
+monitoring, acceptance gates) be built, tested and reviewed before a single model
+finishes training.
+
+Registry
+--------
+
+Artefacts are immutable and versioned; registering a version twice with different
+content is an error, not an update. Promotion is gated on measured p95 latency, so a
+performance regression fails the build rather than the SLO. Shadow traffic needs no
+gate, since its responses are discarded.
+
+Transports
+----------
+
+App.handle(method, path, body) is framework-agnostic and returns a status code and a
+JSON-serialisable dict. The stdlib HTTP server and the FastAPI adapter are both thin
+wrappers over it, so the contract cannot drift between them and tests exercise the real
+request path with no test client and no socket.
+
+GET /ui serves the built React bundle, the demonstration surface PRD 3.2 allows. React
+is the controller and the Python service is the only model: the UI holds form state,
+calls POST /v1/score and renders the response. It has no privileged access and no
+server-side rendering, so it cannot display anything the API does not return.
+
+One detail worth keeping: it highlights spans against scored_text, not against what was
+typed. Preprocessing normalises, scrubs PII and truncates, so marks placed on the raw
+input would land in the wrong place, and worst of all on exactly the items that got
+scrubbed.
+
+gRPC is not built. The PRD's week-four cut list names it as the first thing to drop if
+the week slips (PRD 10), and every pilot consumer speaks HTTP. Adding it means one more
+adapter over the same handle, not a second implementation.

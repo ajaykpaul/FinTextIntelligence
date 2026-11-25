@@ -1,0 +1,742 @@
+% FinTextIntelligence project paper, laid out in the ACL two-column format
+% (A4, 11pt Times, 2.5 cm margins, 0.6 cm column gap, author-year citations).
+% Build: pdflatex FinTextIntelligence.tex (run twice for references).
+\documentclass[11pt,a4paper,twocolumn]{article}
+\usepackage[a4paper,margin=2.5cm,columnsep=0.6cm]{geometry}
+\usepackage{times}
+\renewcommand{\ttdefault}{cmtt}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{url}
+\usepackage[round]{natbib}
+\usepackage[hidelinks,pdfauthor={Ajay Paul (241562405)},pdftitle={FinTextIntelligence: A Bilingual Benchmark and Service for Scoring Financial Text in English and Arabic}]{hyperref}
+\usepackage{xcolor}
+
+\setlength{\parindent}{1em}
+\setlength{\textfloatsep}{10pt plus 2pt minus 2pt}
+\renewcommand{\arraystretch}{1.08}
+\setlength{\tabcolsep}{4pt}
+\bibliographystyle{plainnat}
+
+% ACL-like headings: bold, 12pt sections, 11pt subsections.
+\makeatletter
+\renewcommand\section{\@startsection{section}{1}{\z@}{-2.0ex plus -0.5ex minus -.2ex}{1.5ex plus 0.3ex minus .2ex}{\large\bfseries}}
+\renewcommand\subsection{\@startsection{subsection}{2}{\z@}{-1.8ex plus -0.5ex minus -.2ex}{0.8ex plus .2ex}{\normalsize\bfseries}}
+\renewcommand\paragraph{\@startsection{paragraph}{4}{\z@}{1.0ex plus 0.5ex minus .2ex}{-1em}{\normalsize\bfseries}}
+\makeatother
+
+\newcommand{\sm}{\small}
+
+\title{\Large\bfseries FinTextIntelligence: A Bilingual Benchmark and Service for\\
+Scoring Financial Text in English and Arabic}
+
+\author{
+  \textbf{Ajay Paul (241562405)}\\
+  Department of Electrical Engineering, IIT Kanpur\\
+  EE964 course project\\
+  \texttt{ajaykpaul24@iitk.ac.in}
+}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Automated trading and compliance systems read large volumes of headlines, social
+posts and press releases, but the text signals they rely on are usually built for one
+language and one task, and are rarely checked against the conditions they will be served
+under. We present \textbf{FinTextIntelligence}, a benchmark and an end-to-end scoring
+service for English and Arabic financial text. We make three contributions. First, we
+assemble a bilingual evaluation suite of 15 public sources (121,963 rows after
+deduplication) with a fixed, fingerprinted train/dev/test split and an SEC~EDGAR replay
+set for claim provenance. Second, we define five tasks, namely financial sentiment,
+toxicity (with four subtypes), misleading-content detection, claim provenance and a
+trading gate that turns the scores into a buy, sell or review call, and set 14 acceptance
+criteria before any results were seen. Third, we train a single XLM-R encoder with four
+heads and report every result with bootstrap intervals and multi-seed comparisons. The
+released model passes 5 of the 14 criteria: English sentiment (0.807 macro-F1), English
+toxicity AUROC (0.953), misleading-content F1 (0.807), provenance precision (72/72) and
+claim-extraction recall (0.934). Native Arabic training data lifts Arabic sentiment from
+0.455 to 0.734 macro-F1, while Arabic toxicity stays at 0.909 AUROC, limited by a single
+dataset. We also show that dynamic int8 quantisation, which the latency budget depended
+on, flips up to 9\% of decisions. Code, the evaluation harness and the test cases are
+released for research use.
+\end{abstract}
+
+%=====================================================================
+\section{Introduction}
+
+Text moves markets. A headline that a company has cut its guidance, a rumour about a
+merger, or a coordinated scam promising guaranteed returns can each change prices or
+harm investors within minutes. Desks that trade on news, and compliance teams that
+monitor client channels, therefore want an automatic first reading of every item: is it
+good or bad news, is it abusive, does it look like a scam or misinformation, and has the
+claim been confirmed by a primary source?
+
+Three gaps make this harder than it looks. (i) \emph{Language.} Most financial NLP
+resources are English \citep{malo2014good,maia2018www}; Gulf markets need Arabic, where
+labelled financial text barely exists. (ii) \emph{Task isolation.} Sentiment, toxicity
+and misinformation are usually studied apart, but a trading system has to combine them
+into a single decision, and the combination itself can fail. (iii) \emph{Evaluation
+practice.} Reported numbers often come from thresholds tuned on the test set, a single
+training seed, or a model that differs from the one actually served
+\citep{reimers2017reporting,dror2018hitchhiker}.
+
+\begin{figure}[t]
+\centering
+\setlength{\unitlength}{1mm}
+\begin{picture}(75,62)
+\sm
+\put(17,56){\framebox(41,6){Text or URL (EN, AR)}}
+\put(37.5,56){\vector(0,-1){4}}
+\put(12,46){\framebox(51,6){Clean, PII scrub, language ID}}
+\put(37.5,46){\vector(0,-1){4}}
+\put(1,32){\framebox(73,10){}}
+\put(37.5,39.5){\makebox(0,0){\textbf{XLM-R encoder}}}
+\put(37.5,35){\makebox(0,0){\footnotesize sentiment $\cdot$ toxicity $\cdot$ subtypes $\cdot$ misleading}}
+\put(37.5,32){\vector(0,-1){4}}
+\put(2,22){\framebox(22,6){\footnotesize lexicon floor}}
+\put(26.5,22){\framebox(22,6){\footnotesize scam rules}}
+\put(51,22){\framebox(22,6){\footnotesize provenance}}
+\put(37.5,22){\vector(0,-1){4}}
+\put(15,12){\framebox(45,6){\textbf{Trading gate}}}
+\put(37.5,12){\vector(0,-1){4}}
+\put(2,2){\framebox(22,6){\footnotesize BUY}}
+\put(26.5,2){\framebox(22,6){\footnotesize SELL}}
+\put(51,2){\framebox(22,6){\footnotesize REVIEW}}
+\end{picture}
+\caption{FinTextIntelligence: one shared encoder scores the cleaned text; two rule
+layers and a retrieval-based provenance check follow; the trading gate turns the result
+into a call, and anything uncertain goes to a person.}
+\label{fig:overview}
+\end{figure}
+
+We address these gaps with FinTextIntelligence (Figure~\ref{fig:overview}). Our
+contributions are:
+\begin{itemize}\setlength{\itemsep}{1pt}
+\item A \textbf{bilingual evaluation suite} built from 15 public English and Arabic
+  sources, split once with a fixed seed into train, dev and a frozen test set whose
+  contents are fingerprinted, plus a provenance replay set built from real SEC 8-K
+  filings (\S\ref{sec:data}).
+\item \textbf{Five tasks with pre-registered acceptance criteria}: 14 gates covering
+  quality, provenance and service level, written before any result (\S\ref{sec:tasks}).
+\item A \textbf{shared multilingual model} and a careful evaluation: bootstrap
+  intervals, paired comparisons, multi-seed group comparisons, leakage checks and
+  served-versus-offline parity (\S\ref{sec:exp}), together with an analysis of where
+  and why it fails (\S\ref{sec:analysis}).
+\end{itemize}
+
+%=====================================================================
+\section{Related Work}
+
+\paragraph{Financial sentiment.} Financial PhraseBank \citep{malo2014good} and FiQA
+\citep{maia2018www} are the standard English benchmarks, and domain-adapted encoders
+such as FinBERT \citep{araci2019finbert} improve on general models. A known difficulty is
+polarity that depends on the financial object: ``liabilities fell'' is good news. We use
+both datasets and test that case explicitly.
+
+\paragraph{Toxicity and offensive language.} English work draws on Jigsaw comments
+\citep{jigsaw2018}, Wikipedia Talk \citep{wulczyn2017ex} and HateXplain
+\citep{mathew2021hatexplain}. For Arabic, the OSACT shared tasks
+\citep{mubarak2020overview,mubarak2022overview} provide offensive-language and hate
+labels on tweets, and L-HSAB \citep{mulki2019lhsab} covers Levantine dialect.
+
+\paragraph{Misinformation.} LIAR \citep{wang2017liar}, ISOT \citep{ahmed2017detection},
+FakeNewsNet \citep{shu2020fakenewsnet} and PHEME \citep{zubiaga2016analysing} target
+political claims, fake news and rumours rather than corporate news, which is a domain gap
+we measure qualitatively.
+
+\paragraph{Arabic sentiment.} ArSAS \citep{elmadany2018arsas} and ArSarcasm-v2
+\citep{abufarha2021overview} are native-tweet sentiment sets. We use the first for
+evaluation and the second for training.
+
+\paragraph{Multilingual encoders and efficiency.} XLM-R \citep{conneau2020unsupervised}
+is a strong cross-lingual encoder. Making such models fast on CPUs usually relies on
+int8 quantisation \citep{jacob2018quantization} or distillation \citep{sanh2019distilbert};
+activation outliers make naive int8 lossy, which motivates methods such as SmoothQuant
+\citep{xiao2023smoothquant}.
+
+\paragraph{Evaluation methodology.} We follow the bootstrap tradition for significance
+\citep{efron1993introduction,koehn2004statistical,dror2018hitchhiker}, report score
+distributions over seeds \citep{reimers2017reporting}, and document the model with a
+model card \citep{mitchell2019model}.
+
+%=====================================================================
+\section{The FinTextIntelligence Benchmark}
+\label{sec:data}
+
+\subsection{Sources}
+Table~\ref{tab:data} lists the sources. English and Arabic are both covered for
+sentiment and toxicity; misleading content is English only, because no comparable
+Arabic resource could be licensed. Two Arabic sources are \emph{train-only}: a machine
+translation of the English financial sentiment sets (used only where the English
+original is itself in the train split) and ArSarcasm-v2. Two are \emph{evaluation-only}:
+ArSAS and the Levantine L-HSAB, which the model never trains on. Large English sources
+are capped (e.g.\ Jigsaw at 10,000 rows) to keep the task mix balanced.
+
+\begin{table}[t]
+\centering\sm
+\begin{tabular}{@{}llrl@{}}
+\toprule
+Source & Lang & Rows & Task \\
+\midrule
+Financial PhraseBank & EN & 4,846 & sentiment \\
+FiQA 2018 Task 1 & EN & 1,173 & sentiment \\
+Jigsaw Toxic & EN & 10,000 & toxicity \\
+Wikipedia Talk & EN & 6,000 & toxicity \\
+HateXplain & EN & 8,000 & toxicity \\
+LIAR & EN & 10,000 & misleading \\
+ISOT Fake News & EN & 8,000 & misleading \\
+FakeNewsNet & EN & 5,000 & misleading \\
+PHEME & EN & 5,802 & misleading \\
+\midrule
+OSACT4 & AR & 8,000 & toxicity \\
+OSACT5 & AR & 10,157 & toxicity \\
+Translated PB + FiQA$^\dagger$ & AR & 4,919 & sentiment \\
+ArSarcasm-v2$^\dagger$ & AR & 15,542 & sentiment \\
+ArSAS$^\ddagger$ & AR & 18,678 & sentiment \\
+L-HSAB$^\ddagger$ & AR-lev & 5,846 & toxicity \\
+\bottomrule
+\end{tabular}
+\caption{Data sources. $^\dagger$train only; $^\ddagger$evaluation only.}
+\label{tab:data}
+\end{table}
+
+\subsection{Splits and fingerprints}
+All sources are deduplicated and cut once with a fixed seed into 85,892 train, 18,035 dev
+and 18,036 test rows. Dev is used for every choice (thresholds, offsets, seed
+selection); test is used only for reporting. Each run's manifest stores a hash of the
+actual text in each split, so a later run can prove it was evaluated on exactly the same
+rows: every run reported here shares train fingerprint \texttt{6acad74b} and held-out
+fingerprint \texttt{23732d3d}.
+
+\subsection{Provenance replay set}
+To test claim provenance we built replay cases from real SEC 8-K filings. A
+\emph{genuine} claim is the sentence of a company's own Exhibit 99.1 press release that
+names it and states the event; a \emph{fabricated} claim swaps the company for one whose
+filings cannot support it. The development set (2022-01 to 2024-06) has 125 genuine and
+100 fabricated cases; the test set (2024-07 to 2025-12) has 115 and 97, shares no filing
+with development, and was scored once.
+
+\subsection{Scam patterns}
+Scam-pattern rules (guaranteed returns, urgency plus payment, bank impersonation, and
+others) are derived from public SEC investor alerts, with unit tests that quote the
+alerts' own phrasing.
+
+%=====================================================================
+\section{Tasks}
+\label{sec:tasks}
+
+\paragraph{Task 1: Sentiment.} Three-way (positive / negative / neutral) for EN and
+Arabic; gated on English macro-F1, Arabic reported.
+
+\paragraph{Task 2: Toxicity.} Binary toxic / not toxic for EN and AR, plus four reported
+subtypes (hate, harassment, profanity, threat). A high-severity lexicon (slurs and direct
+threats, with leetspeak folding) acts as a floor and is the only place a rule overrides
+the model.
+
+\paragraph{Task 3: Misleading content.} Binary ``likely misleading'' for English. It
+detects the style of misleading content and never asserts that a claim is false.
+
+\paragraph{Task 4: Provenance.} For a market-moving claim, extract company, claim type
+and particulars, then search an index of primary filings. The state is \emph{pending}
+inside a time window and \emph{corroborated} or \emph{uncorroborated} after it.
+
+\paragraph{Task 5: Trading gate.} Combine sentiment, provenance, the misleading flag and
+service health into BUY, SELL or REVIEW, with a priority of \emph{now} or
+\emph{routine}. The gate never acts on its own: every REVIEW goes to a human queue, and
+human decisions are logged as future training labels.
+
+\paragraph{Acceptance criteria.} Fourteen gates were fixed in the requirements before
+any result was produced (Table~\ref{tab:main}); three of them (pending-before-expiry,
+human-review precision and availability) can only be measured in a live pilot.
+
+%=====================================================================
+\section{Models, Experiments and Results}
+\label{sec:exp}
+
+\subsection{Model}
+One \texttt{xlm-roberta-base} encoder \citep{conneau2020unsupervised} feeds four linear
+heads. Training uses 3 epochs, batch 32, learning rate $2\times10^{-5}$ for heads and
+$10^{-5}$ for the encoder, warm-up 6\%, maximum length 256, fp16, a sentiment loss
+weight of 2.0 and an Arabic-toxicity weight of 1.5. Training and serving read identical
+normalised text, including folding of Arabic spelling variants. The release run took 17
+minutes on one A100. For serving, the model is exported to ONNX and run at fp32 with four
+CPU threads.
+
+\subsection{Thresholds and protocol}
+Toxicity thresholds are tuned recall-first on dev (dev recall $\ge 0.90$, best F1 above
+it): 0.645 for English and 0.253 for Arabic. Misleading uses the best dev F1 within
+precision and recall floors (0.468). For Arabic sentiment, per-class logit offsets are
+tuned on dev. Intervals are 95\% percentile intervals from 1,000 bootstrap resamples of
+the test rows, with thresholds held fixed.
+
+\subsection{Main results}
+Table~\ref{tab:main} gives the release model (\texttt{shared-xlmr.v4.1}) against every
+gate. Five pass, six fail and three need a pilot. The three model gates that pass do so
+\emph{within noise}: each target lies inside its interval.
+
+\begin{table*}[t]
+\centering\sm
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Criterion & Measured (95\% CI) & Target & Status & Seed range (4 runs) \\
+\midrule
+English sentiment macro-F1 & 0.807 (0.770--0.845) & $\ge$ 0.80 & pass, within noise & 0.801--0.819 \\
+English toxicity AUROC & 0.953 (0.945--0.961) & $\ge$ 0.95 & pass, within noise & 0.953--0.956 \\
+English misleading F1 & 0.807 (0.787--0.825) & $\ge$ 0.80 & pass, within noise & 0.807--0.815 \\
+Corroboration precision & 1.000 (72/72; LB 0.949) & $\ge$ 0.95 & pass & -- \\
+Claim-extraction recall & 0.934 & $\ge$ 0.85 & pass & -- \\
+\midrule
+Arabic toxicity AUROC & 0.909 (0.893--0.924) & $\ge$ 0.92 & fail, within noise & 0.903--0.909 \\
+English toxicity F1 & 0.793 (0.767--0.818) & $\ge$ 0.85 & fail & -- \\
+Arabic toxicity F1 & 0.710 (0.678--0.741) & $\ge$ 0.80 & fail & 0.679--0.710 \\
+EN--AR toxicity F1 gap & 0.083 (0.044--0.125) & $\le$ 0.07 & fail, within noise & 0.083--0.123 \\
+p95 latency (CPU, 256 tok.) & 51.0--60.5 ms & $\le$ 50 ms & fail & -- \\
+Throughput per replica & 26.8--29.6 rps & $\ge$ 100 & fail & -- \\
+\midrule
+Pending resolves before expiry & not measurable offline & $\ge$ 0.90 & pilot & -- \\
+English human-review precision & pilot only & $\ge$ 0.90 & pilot & -- \\
+Availability & pilot only & $\ge$ 0.995 & pilot & -- \\
+\midrule
+\multicolumn{5}{@{}p{0.9\textwidth}}{\emph{Reported, not gated:} Arabic sentiment macro-F1 0.739; Levantine toxicity AUROC 0.837, F1 0.658.} \\
+\bottomrule
+\end{tabular}
+\caption{Release model \texttt{shared-xlmr.v4.1} on the frozen test set (18,036 rows)
+against the 14 pre-registered acceptance criteria.}
+\label{tab:main}
+\end{table*}
+
+\subsection{Is an improvement real? Seeds versus fixes}
+Between the first two full runs we changed three things (training on served text,
+Arabic spelling folding, Arabic toxicity loss weight). A paired bootstrap called run~2
+better on Arabic toxicity AUROC (+0.011, CI +0.004 to +0.017). Retraining each setup with
+three more seeds tells a different story (Table~\ref{tab:seeds}): identically configured
+runs span 0.894--0.907, and the only effect that survives a group comparison
+resampling both rows and seeds is on unseen Levantine text.
+
+\begin{table}[t]
+\centering\sm
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Metric & Old (4) & New (4) & Diff. (95\%) \\
+\midrule
+AR tox.\ AUROC & 0.898 & 0.901 & +0.003 (n.s.) \\
+AR tox.\ F1 & 0.672 & 0.676 & +0.004 (n.s.) \\
+Lev.\ tox.\ AUROC & 0.816 & 0.824 & +0.008 \\
+Lev.\ tox.\ F1 & 0.627 & 0.642 & +0.015 \\
+EN tox.\ AUROC & 0.954 & 0.952 & $-$0.002 (n.s.) \\
+EN sent.\ F1 & 0.806 & 0.809 & +0.004 (n.s.) \\
+\bottomrule
+\end{tabular}
+\caption{Four seeds of each training setup; intervals resample test rows and runs
+together. n.s.: interval contains zero.}
+\label{tab:seeds}
+\end{table}
+
+\subsection{Arabic sentiment}
+Trained only on translated financial sentences, the model scored 0.455 macro-F1 (mean of
+four seeds) on native ArSAS tweets and almost never predicted \emph{neutral}
+(one-vs-rest AUROC 0.68). Dev-tuned offsets recover about eight points (0.490 to 0.569),
+but cannot fix weak ranking. Adding ArSarcasm-v2 (15,542 native tweets, six
+near-duplicates of held-out rows removed) was the single largest change in the project
+(Table~\ref{tab:arsent}); nothing else got worse. A character n-gram TF-IDF leakage check
+found no copied tweets: the closest matches were stock phrases, and removing them moved
+no metric by more than 0.0007.
+
+\begin{table}[t]
+\centering\sm
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & v2 (4 seeds) & v3 (3 seeds) & Diff. \\
+\midrule
+AR sentiment F1 & 0.455 & 0.734 & +0.280 \\
+Neutral AUROC & 0.68 & 0.91 & -- \\
+AR tox.\ AUROC & 0.901 & 0.905 & n.s. \\
+EN tox.\ AUROC & 0.952 & 0.955 & +0.003 \\
+\bottomrule
+\end{tabular}
+\caption{Effect of native Arabic sentiment training data. Diff.\ CI for Arabic
+sentiment: +0.254 to +0.306.}
+\label{tab:arsent}
+\end{table}
+
+\subsection{Provenance}
+Matching claims against filing titles alone confirmed 43 of 115 genuine test claims;
+indexing filing text raised this to 80. Because each genuine claim was taken from its
+own filing, the headline result removes the claim's own sentence first, so the rest of
+the release must support it (Table~\ref{tab:prov}). No fabricated claim was ever
+confirmed. A rule found on development data requires a text match to include a claim
+particular (a counterparty, person or amount), which removed three false confirmations.
+
+\begin{table}[t]
+\centering\sm
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Index & Genuine & Fabr. & Prec.\ (LB) \\
+\midrule
+Item titles only & 43/115 & 0/97 & 1.0 (0.918) \\
+With filing text & 80/115 & 0/97 & 1.0 (0.954) \\
+Text, claim held out & 72/115 & 0/97 & 1.0 (0.949) \\
+\bottomrule
+\end{tabular}
+\caption{Provenance on the held-out replay test set. LB: 95\% lower bound on
+precision.}
+\label{tab:prov}
+\end{table}
+
+\subsection{Latency and quantisation}
+On an Apple M5 CPU the full pipeline's p95 at 256 tokens sits at about 50 ms, landing
+either side of the target from session to session (51--61 ms in the release session).
+The budget assumed int8 on x86. On a Colab Xeon, default dynamic int8 is $2.2\times$
+faster single-threaded, but on 1,000 held-out rows it flips 90 sentiment labels and 41/48
+toxicity/misleading flags at the release thresholds, about twice the damage seen on ARM.
+Eight recipes were tried (Table~\ref{tab:int8}); those that keep the speed-up damage
+decisions, and the most faithful one gains only $1.17\times$.
+
+\begin{table}[t]
+\centering\sm
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Recipe & Flips (tox/mis/sent) & Speed-up \\
+\midrule
+int8 default & 41 / 48 / 90 & 2.23$\times$ \\
+per-channel & 46 / 38 / 99 & -- \\
+reduce-range & 73 / 58 / 118 & 2.25$\times$ \\
+uint8 weights & 48 / 41 / 81 & 0.99$\times$ \\
+encoder lin.\ only & 51 / 43 / 85 & 2.25$\times$ \\
+FFN only & 48 / 46 / 92 & 1.64$\times$ \\
+FFN up-proj.\ only & 12 / 17 / 33 & 1.17$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Dynamic int8 on x86: decision flips on 1,000 held-out rows and single-thread
+speed-up over fp32.}
+\label{tab:int8}
+\end{table}
+
+%=====================================================================
+\section{Analysis}
+\label{sec:analysis}
+
+\paragraph{Arabic toxicity is limited by one dataset.} Per dataset, OSACT4 alone passes
+the AUROC gate (0.942) while OSACT5 reaches 0.854 and is underfit even on its training
+rows. No threshold on either dataset reaches 0.80 F1 (best 0.760). Several of the most
+confident errors are tweets that read as offensive but are labelled not offensive. A
+blind 200-tweet relabelling audit is designed and its sample drawn, but needs a fluent
+annotator.
+
+\paragraph{F1 targets are threshold ceilings.} The best dev F1 at \emph{any} threshold
+is 0.825 for English toxicity and 0.754 for Arabic, both below their targets, so no
+decision rule can pass those gates; only a better model or cleaner labels can.
+
+\paragraph{Domain gap in misleading content.} The head learnt ``misleading'' from
+political claims and fake news. On ordinary corporate news it over-flags: ``Revenue
+missed consensus and the board cut its full-year guidance'' scores 0.52 and a routine
+stake acquisition by a bank scores 0.83. The gate sends both to a person, which is safe
+but noisy.
+
+\paragraph{Polarity of financial objects.} ``Liabilities fell sharply in the third
+quarter as the group repaid debt'' is scored positive (0.93), the correct reading, and
+gives BUY. The Arabic counterparts of simple profit and loss headlines are scored
+correctly (0.98 positive, 0.96 negative).
+
+\paragraph{Gate composition.} Because the gate does not consult toxicity, an abusive post
+with negative tone yields SELL (0.85) under the trading profile. Such content should be
+routed to the compliance profile; we report this as a design limitation rather than a
+model error.
+
+\paragraph{Served path.} A late check found the default configuration still held the
+rule-based scorer's thresholds (0.35 instead of 0.645 for English toxicity). Score-level
+parity tests had passed because they did not compare final flags. A release
+configuration and a test that fails on threshold drift now guard this.
+
+%=====================================================================
+\section{Conclusion and Future Directions}
+
+FinTextIntelligence combines four text classifiers, two rule layers, a retrieval-based
+provenance check and a trading gate behind one service for English and Arabic financial
+text, and evaluates them against criteria fixed in advance. The release model passes 5 of
+14 gates and is not accepted, but the failures are well characterised: Arabic toxicity
+is bounded by one dataset and possibly its labels, toxicity F1 targets lie above the
+threshold ceiling, and the latency gap needs a smaller model or different hardware rather
+than more tuning. The most useful lessons are methodological: use several seeds from
+the first comparison, test the whole served path including its configuration, and
+measure flipped decisions rather than score drift.
+
+Next steps are a six-layer distilled encoder for latency, the Arabic label audit,
+continued pre-training on unlabelled Arabic tweets, outlier-aware quantisation, and a
+hand-labelled in-domain test set of issuer and bank-channel text.
+
+\section*{Acknowledgements}
+We thank the creators of the public datasets listed in Table~\ref{tab:data} for making
+them available for research, and the EE964 course staff at IIT Kanpur.
+
+\section*{Limitations}
+Every quality number comes from public benchmarks (tweets, Wikipedia comments, news),
+none of which is financial text from the intended channels, so the in-domain error rate
+is unknown. Misleading-content detection is English only. Arabic sentiment is measured
+on dialectal tweets rather than Arabic financial text, and its training data is partly
+machine-translated. Latency was measured on a laptop CPU, not on the reference server.
+Three acceptance criteria require a live pilot. The trading gate gives direction only,
+not size or timing, and ignores toxicity.
+
+\section*{Ethical Considerations}
+The service reports and people decide: no score blocks content or executes a trade on
+its own, and every uncertain item goes to a human reviewer. Personal data (phone numbers,
+emails) is scrubbed before scoring. No private, customer or employee data was used;
+every source is public and its licence is recorded, and captured production text is
+excluded from training until cleared. Toxicity labels encode annotator judgements that
+may be noisy or culturally biased, particularly across Arabic dialects. The trained
+weights inherit non-commercial terms from some training data and are shared for research
+and evaluation only.
+
+\small
+\begin{thebibliography}{99}
+
+\bibitem[Abu~Farha et~al.(2021)]{abufarha2021overview}
+Ibrahim Abu~Farha, Wajdi Zaghouani, and Walid Magdy. 2021.
+\newblock Overview of the WANLP 2021 shared task on sarcasm and sentiment detection in
+  Arabic.
+\newblock In \emph{Proceedings of the Sixth Arabic Natural Language Processing
+  Workshop}.
+
+\bibitem[Ahmed et~al.(2017)]{ahmed2017detection}
+Hadeer Ahmed, Issa Traore, and Sherif Saad. 2017.
+\newblock Detection of online fake news using n-gram analysis and machine learning
+  techniques.
+\newblock In \emph{Intelligent, Secure, and Dependable Systems in Distributed and Cloud
+  Environments (ISDDC)}.
+
+\bibitem[Araci(2019)]{araci2019finbert}
+Dogu Araci. 2019.
+\newblock FinBERT: Financial sentiment analysis with pre-trained language models.
+\newblock \emph{arXiv preprint arXiv:1908.10063}.
+
+\bibitem[Conneau et~al.(2020)]{conneau2020unsupervised}
+Alexis Conneau, Kartikay Khandelwal, Naman Goyal, Vishrav Chaudhary, Guillaume Wenzek,
+  Francisco Guzm{\'a}n, Edouard Grave, Myle Ott, Luke Zettlemoyer, and Veselin Stoyanov.
+  2020.
+\newblock Unsupervised cross-lingual representation learning at scale.
+\newblock In \emph{Proceedings of ACL}.
+
+\bibitem[Dror et~al.(2018)]{dror2018hitchhiker}
+Rotem Dror, Gili Baumer, Segev Shlomov, and Roi Reichart. 2018.
+\newblock The hitchhiker's guide to testing statistical significance in natural language
+  processing.
+\newblock In \emph{Proceedings of ACL}.
+
+\bibitem[Efron and Tibshirani(1993)]{efron1993introduction}
+Bradley Efron and Robert~J. Tibshirani. 1993.
+\newblock \emph{An Introduction to the Bootstrap}.
+\newblock Chapman \& Hall.
+
+\bibitem[Elmadany et~al.(2018)]{elmadany2018arsas}
+AbdelRahim Elmadany, Hamdy Mubarak, and Walid Magdy. 2018.
+\newblock ArSAS: An Arabic speech-act and sentiment corpus of tweets.
+\newblock In \emph{Proceedings of the OSACT 3 Workshop (LREC)}.
+
+\bibitem[Jacob et~al.(2018)]{jacob2018quantization}
+Benoit Jacob, Skirmantas Kligys, Bo~Chen, Menglong Zhu, Matthew Tang, Andrew Howard,
+  Hartwig Adam, and Dmitry Kalenichenko. 2018.
+\newblock Quantization and training of neural networks for efficient
+  integer-arithmetic-only inference.
+\newblock In \emph{Proceedings of CVPR}.
+
+\bibitem[Jigsaw(2018)]{jigsaw2018}
+Jigsaw and Google. 2018.
+\newblock Toxic comment classification challenge.
+\newblock Kaggle competition.
+
+\bibitem[Koehn(2004)]{koehn2004statistical}
+Philipp Koehn. 2004.
+\newblock Statistical significance tests for machine translation evaluation.
+\newblock In \emph{Proceedings of EMNLP}.
+
+\bibitem[Maia et~al.(2018)]{maia2018www}
+Macedo Maia, Siegfried Handschuh, Andr{\'e} Freitas, Brian Davis, Ross McDermott, Manel
+  Zarrouk, and Alexandra Balahur. 2018.
+\newblock WWW'18 open challenge: Financial opinion mining and question answering.
+\newblock In \emph{Companion Proceedings of The Web Conference}.
+
+\bibitem[Malo et~al.(2014)]{malo2014good}
+Pekka Malo, Ankur Sinha, Pekka Korhonen, Jyrki Wallenius, and Pyry Takala. 2014.
+\newblock Good debt or bad debt: Detecting semantic orientations in economic texts.
+\newblock \emph{Journal of the Association for Information Science and Technology},
+  65(4).
+
+\bibitem[Mathew et~al.(2021)]{mathew2021hatexplain}
+Binny Mathew, Punyajoy Saha, Seid~Muhie Yimam, Chris Biemann, Pawan Goyal, and Animesh
+  Mukherjee. 2021.
+\newblock HateXplain: A benchmark dataset for explainable hate speech detection.
+\newblock In \emph{Proceedings of AAAI}.
+
+\bibitem[Mitchell et~al.(2019)]{mitchell2019model}
+Margaret Mitchell, Simone Wu, Andrew Zaldivar, Parker Barnes, Lucy Vasserman, Ben
+  Hutchinson, Elena Spitzer, Inioluwa~Deborah Raji, and Timnit Gebru. 2019.
+\newblock Model cards for model reporting.
+\newblock In \emph{Proceedings of FAT*}.
+
+\bibitem[Mubarak et~al.(2020)]{mubarak2020overview}
+Hamdy Mubarak, Kareem Darwish, Walid Magdy, Tamer Elsayed, and Hend Al-Khalifa. 2020.
+\newblock Overview of OSACT4 Arabic offensive language detection shared task.
+\newblock In \emph{Proceedings of the 4th Workshop on Open-Source Arabic Corpora and
+  Processing Tools}.
+
+\bibitem[Mubarak et~al.(2022)]{mubarak2022overview}
+Hamdy Mubarak, Hend Al-Khalifa, and AbdulMohsen Al-Thubaity. 2022.
+\newblock Overview of OSACT5 shared task on Arabic offensive language and hate speech
+  detection.
+\newblock In \emph{Proceedings of the 5th Workshop on Open-Source Arabic Corpora and
+  Processing Tools}.
+
+\bibitem[Mulki et~al.(2019)]{mulki2019lhsab}
+Hala Mulki, Hatem Haddad, Chedi Bechikh~Ali, and Halima Alshabani. 2019.
+\newblock L-HSAB: A Levantine Twitter dataset for hate speech and abusive language.
+\newblock In \emph{Proceedings of the Third Workshop on Abusive Language Online}.
+
+\bibitem[Reimers and Gurevych(2017)]{reimers2017reporting}
+Nils Reimers and Iryna Gurevych. 2017.
+\newblock Reporting score distributions makes a difference: Performance study of
+  LSTM-networks for sequence tagging.
+\newblock In \emph{Proceedings of EMNLP}.
+
+\bibitem[Sanh et~al.(2019)]{sanh2019distilbert}
+Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas Wolf. 2019.
+\newblock DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter.
+\newblock \emph{arXiv preprint arXiv:1910.01108}.
+
+\bibitem[Shu et~al.(2020)]{shu2020fakenewsnet}
+Kai Shu, Deepak Mahudeswaran, Suhang Wang, Dongwon Lee, and Huan Liu. 2020.
+\newblock FakeNewsNet: A data repository with news content, social context, and
+  spatiotemporal information for studying fake news on social media.
+\newblock \emph{Big Data}, 8(3).
+
+\bibitem[Wang(2017)]{wang2017liar}
+William~Yang Wang. 2017.
+\newblock ``Liar, liar pants on fire'': A new benchmark dataset for fake news detection.
+\newblock In \emph{Proceedings of ACL}.
+
+\bibitem[Wulczyn et~al.(2017)]{wulczyn2017ex}
+Ellery Wulczyn, Nithum Thain, and Lucas Dixon. 2017.
+\newblock Ex machina: Personal attacks seen at scale.
+\newblock In \emph{Proceedings of WWW}.
+
+\bibitem[Xiao et~al.(2023)]{xiao2023smoothquant}
+Guangxuan Xiao, Ji~Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. 2023.
+\newblock SmoothQuant: Accurate and efficient post-training quantization for large
+  language models.
+\newblock In \emph{Proceedings of ICML}.
+
+\bibitem[Zubiaga et~al.(2016)]{zubiaga2016analysing}
+Arkaitz Zubiaga, Maria Liakata, Rob Procter, Geraldine Wong~Sak~Hoi, and Peter Tolmie.
+  2016.
+\newblock Analysing how people orient to and spread rumours in social media by looking
+  at conversational threads.
+\newblock \emph{PLoS ONE}, 11(3).
+
+\end{thebibliography}
+\normalsize
+
+%=====================================================================
+\appendix
+\onecolumn
+\section{Dataset Details}
+
+\begin{table}[h]
+\centering\sm
+\begin{tabular}{@{}llrll@{}}
+\toprule
+Source & Lang & Rows & Role & Licence / terms \\
+\midrule
+Financial PhraseBank & EN & 4,846 & train/dev/test & CC BY-NC-SA 3.0 \\
+FiQA 2018 Task 1 & EN & 1,173 & train/dev/test & open shared-task data \\
+Jigsaw Toxic Comments & EN & 10,000 (cap) & train/dev/test & Kaggle data-use terms \\
+Wikipedia Talk: Toxicity & EN & 6,000 (cap) & train/dev/test & CC0 \\
+HateXplain & EN & 8,000 (cap) & train/dev/test & repository licence \\
+LIAR & EN & 10,000 (cap) & train/dev/test & research use \\
+ISOT Fake News & EN & 8,000 (cap) & train/dev/test & free research download \\
+FakeNewsNet & EN & 5,000 (cap) & train/dev/test & official scripts, platform terms \\
+PHEME & EN & 5,802 & train/dev/test & research licence \\
+OSACT4 (train + dev) & AR & 8,000 & train/dev/test & shared-task terms \\
+OSACT5 (train + val.) & AR & 10,157 & train/dev/test & shared-task terms \\
+PhraseBank + FiQA, translated & AR & 4,919 & train only & inherits source terms \\
+ArSarcasm-v2 & AR & 15,542 & train only & MIT \\
+ArSAS & AR & 18,678 & dev/test only & research terms \\
+L-HSAB & AR (Levantine) & 5,846 & test only & research licence \\
+\midrule
+\multicolumn{5}{@{}p{0.95\textwidth}}{Split totals: 85,892 train / 18,035 dev / 18,036 test. By task: toxicity 42,157; subtypes 36,157; misleading 28,802; sentiment 6,019 (EN).} \\
+\bottomrule
+\end{tabular}
+\caption{All sources, their role in the split, and licence terms.}
+\end{table}
+
+Translated rows are used only when their English original is in the train split, so
+nothing derived from a dev or test row can enter training. Every ArSarcasm-v2 tweet was
+compared with every dev and test row before joining training; six near-duplicates were
+dropped. A source that loads zero rows stops the run.
+
+\section{Model and Experiment Details}
+
+\begin{table}[h]
+\centering\sm
+\begin{tabular}{@{}ll@{}}
+\toprule
+Setting & Value \\
+\midrule
+Encoder & xlm-roberta-base \\
+Epochs / batch / max length & 3 / 32 / 256 \\
+Learning rate (heads / encoder) & $2\times10^{-5}$ / $1\times10^{-5}$ \\
+Weight decay / warm-up & 0.01 / 6\% \\
+Loss weights & sentiment 2.0; Arabic toxicity 1.5 \\
+Precision & fp16 training; fp32 ONNX serving, 4 threads \\
+Release run & A100 80 GB, 17.0 min, seed 20240101 \\
+Thresholds (dev) & toxicity EN 0.645, AR 0.253; misleading 0.468 \\
+Arabic sentiment offsets (dev) & positive +0.6, neutral $-$0.2 (negative fixed at 0) \\
+Serving parity & 400/400 Arabic labels match; scores within $4\times10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\caption{Training and serving configuration of the release model.}
+\end{table}
+
+\section{Evaluation Metrics and Statistics}
+
+Sentiment uses macro-F1 over three classes; toxicity reports AUROC and F1 at the
+dev-tuned threshold; misleading content reports F1. Intervals are 95\% percentile
+intervals from 1,000 bootstrap resamples of the 18,036 test rows; the whole test set is
+resampled together, so the EN--AR gap interval is paired. Comparisons between two runs
+resample the rows once per draw and score both runs on the same draw, reporting the
+interval on $B - A$; the call is ``no detectable difference'' when it contains zero. The
+tool refuses to pair runs that were not tested on the same rows, checked by a per-row
+digest. Comparisons between setups resample test rows and runs within each setup
+together, so the interval covers both test-sample and seed variation. Provenance
+precision lower bounds are lower ends of 95\% Wilson score intervals.
+
+\section{Use and Test Cases}
+
+\begin{table}[h]
+\centering\sm
+\begin{tabular}{@{}llll@{}}
+\toprule
+ID & Input (abridged) & Expected & Observed \\
+\midrule
+T01 & Liabilities fell sharply \ldots\ repaid debt. & positive, BUY & positive 0.93, BUY \\
+T02 & Net profit rose 18\% and \ldots\ raised its dividend. & positive, BUY & positive 0.98, BUY \\
+T03 & Revenue missed consensus \ldots\ cut guidance. & negative & negative 0.93; flagged misleading \\
+T04 & The company will publish its results on Tuesday. & neutral, routine & neutral 0.97, REVIEW routine \\
+T05 & Arabic: bank shares rise after profit growth & positive, BUY & positive 0.98, BUY \\
+T06 & Arabic: profits fell, big losses in Q3 & negative, SELL & negative 0.96, SELL \\
+T07 & Guaranteed 300\% returns \ldots\ send USDT & scam, urgent review & 2 scam rules; REVIEW now \\
+T08 & Official verified account \ldots\ share your OTP & scam, urgent review & bank impersonation; REVIEW now \\
+T09 & Abusive post with obfuscated threat & toxic (threat) & toxic 0.99, lexicon match \\
+T10 & Thanks for the update, see you at the call. & not toxic & not toxic, no flags \\
+T13 & Text with phone number and email & scrubbed & [PHONE], [EMAIL] \\
+T17 & $\sim$9k characters & scored, truncated & truncated = true \\
+T20 & Per-item latency & $<$ 50 ms & 6--12 ms (short inputs) \\
+\bottomrule
+\end{tabular}
+\caption{Selected functional test cases run against the served release model.}
+\end{table}
+
+\end{document}

@@ -1,0 +1,174 @@
+Arabic toxicity: what limits it, and why the F1 target isn't reachable as set
+=============================================================================
+
+The PRD asks for Arabic toxicity F1 ≥ 0.80 at a recall-first threshold (recall ≥ 0.90),
+AUROC ≥ 0.92, and an English–Arabic F1 gap ≤ 0.07. The shared XLM-R base model misses
+all three. This note sets out what was measured, what was changed, and why the F1 target
+can't be met by threshold choice on these datasets. Whether the limit is the model or
+the labels is not yet measured; the last sections say what would settle it.
+
+All numbers are on the frozen test split. Thresholds are tuned on dev.
+
+Two runs
+--------
+
+                          Run 1 (shared-xlmr-20261118-1446)   Run 2 (with the fixes below)   Target
+  ----------------------- ----------------------------------- ------------------------------ --------
+  Arabic toxicity AUROC   0.896                               0.907                          ≥ 0.92
+  Arabic toxicity F1      0.663                               0.675                          ≥ 0.80
+  English toxicity F1     0.796                               0.793                          ≥ 0.85
+  EN–AR F1 gap            0.134                               0.118                          ≤ 0.07
+  English sentiment F1    0.7995                              0.821                          ≥ 0.80
+  English misleading F1   0.803                               0.818                          ≥ 0.80
+
+Both runs: XLM-R base, 3 epochs, batch 32, fp16, same seed and the same split (identical
+train fingerprint, same 18,036 test rows). Run 1 on a T4, run 2 on an A100. The run 1
+numbers above are from Colab, on the raw text it trained on.
+
+Ruling things out
+-----------------
+
+Not too little Arabic data. Training has 15,406 Arabic toxicity rows against 20,361
+English, both about 27% toxic.
+
+Not the two Arabic sources contradicting each other. OSACT4 (8,000 tweets) and OSACT5
+(10,157) share no tweets, and neither has duplicate tweets with conflicting labels.
+
+Not the shared threshold. Each language gets one threshold. Giving each dataset its own
+would barely move F1 (table below, F1@0.9R against F1 dep).
+
+Where the errors are (run 1, by dataset)
+----------------------------------------
+
+From fintext.diagnose, dev and test pooled:
+
+  Dataset                         Rows    Offensive   AUROC train   AUROC held-out   Best F1, any threshold   F1 at 90% recall   F1 deployed
+  ------------------------------- ------- ----------- ------------- ---------------- ------------------------ ------------------ -------------
+  OSACT4 (ar)                     1,217   20%         0.975         0.942            0.760                    0.670              0.690
+  OSACT5 (ar)                     1,534   36%         0.913         0.854            0.718                    0.677              0.657
+  L-HSAB (Levantine, eval only)   5,846   38%         —             0.811            0.670                    0.635              0.627
+  HateXplain (en)                 1,233   59%         0.864         0.832            0.806                    0.806              0.804
+  Jigsaw (en)                     1,546   10%         0.993         0.984            0.790                    0.765              0.790
+  Wikipedia Talk (en)             860     13%         0.992         0.981            0.827                    0.799              0.825
+
+Three things stand out.
+
+1.  OSACT4 alone passes the AUROC target (0.942). The combined Arabic figure is pulled
+    under 0.92 by OSACT5.
+2.  OSACT5 was underfit, not overfit: 0.913 AUROC even on rows it trained on, against
+    0.99 for the English sets.
+3.  No Arabic dataset reaches F1 0.80 at any threshold. The best is 0.760. So the F1
+    gate can't be passed by choosing a threshold; and with recall held at 0.90 it costs
+    a further 0.05–0.09.
+
+What was changed between the runs
+---------------------------------
+
+- Training now reads the text the service reads. The service normalises text (NFKC,
+  invisible characters and diacritics removed, PII replaced) before the model sees it;
+  training had been using the raw text. Both now go through preprocess.model_text.
+- Arabic spelling variants folded. أ إ آ ٱ → ا, and letters repeated three or more times
+  cut to two (غبيييي → غبيي). Numbers are never touched.
+- Arabic toxicity rows weighted 1.5× in the loss, for the underfitting in point 2.
+
+Paired comparison. On the same test rows, resampled together (fintext compare;
+reports/compare_run1_run2.json), run 2 beats run 1 on Arabic toxicity AUROC by +0.011
+(95% interval +0.004 to +0.017), on Levantine AUROC by +0.017 (+0.010 to +0.025) and
+Levantine F1 by +0.027 (+0.018 to +0.036). Arabic F1 improves by +0.018 (+0.001 to
++0.033), only just clear of zero. The gap's −0.021 is not shown (−0.043 to +0.003), and
+English toxicity is unchanged. Run 1 is scored there on today's folded text, which it
+never trained on; that lowers its Arabic F1 slightly (0.657 against 0.663 on raw text)
+but not its AUROC.
+
+But that is run 2, not the fixes. Three more runs of the run 2 setup, changing only the
+training seed, scored 0.895, 0.906 and 0.894 Arabic AUROC. Run 1's 0.896 is inside the
+range of runs with the fixes (0.894–0.907), and the paired test separates run 2 from two
+of its own reseeded copies by as much as it separated run 2 from run 1. So the Arabic
+AUROC gain is training variance, and the fixes are not shown to change it.
+
+Run 1's setup was then also trained three more times, so each setup has four runs, and
+the two setups were compared with an interval that covers both the test sample and the
+seed. On Arabic toxicity there is no detectable difference: AUROC +0.003 (−0.005 to
++0.010), F1 +0.004 (−0.014 to +0.022). The gap's −0.011 isn't shown either. The one real
+effect is on Levantine, never trained on: AUROC +0.008 (+0.000 to +0.015) and F1 +0.015
+(+0.006 to +0.025), which fits the spelling fold helping dialectal spelling most. Full
+table in EVALUATION_REPORT.txt; data in reports/setup_comparison.json.
+
+So the fixes are kept, but not for the reason they were made. Training on the text the
+service actually scores is correct whatever it measures, and the fold helps Levantine.
+Neither moves the gated Arabic numbers. With per-dataset AUROC (OSACT4 0.942, OSACT5
+0.854) and no threshold reaching 0.80 F1 on either set, the gap to the targets is in the
+model and the labels, not in text handling.
+
+Run 2's Arabic AUROC interval reaches just above 0.92, but no run of its setup does
+(best 0.907, mean 0.901), so the gate is effectively a fail. Arabic F1 (0.641–0.704) and
+the gap (0.079–0.160) are clear failures.
+
+Native Arabic sentiment data (v3) doesn't change this either. Three seeds with
+ArSarcasm-v2 in training, against the four v2 runs: Arabic toxicity AUROC +0.005 (−0.004
+to +0.014), F1 +0.015 (−0.005 to +0.036). Neither is a detectable difference, as
+expected when no toxicity data was added (reports/v3_comparison.json).
+
+The labels
+----------
+
+The model's most confident mistakes include tweets that read as offensive but are
+labelled not, for example "كل زق" (roughly "eat shit") and an insult using "الكلب"
+("dog"). The same happens in English: HateXplain has posts containing racial slurs that
+all three of its annotators marked "normal", which I checked in the raw file rather than
+taking from the model's output.
+
+These are examples, not a measurement, and I want to be clear about what they do and
+don't show. They show that OSACT5's labels contain errors of the kind that would cap F1.
+They don't show how many there are, so I can't say how much of the remaining gap is the
+labels and how much is the model.
+
+The measurement is designed and ready but hasn't been run, because it needs a fluent
+reader of Gulf and Egyptian Arabic and I didn't have one. The design:
+
+- a blind relabelling of 200 held-out OSACT5 tweets, half labelled offensive and half
+  not, drawn at random (not from the model's errors) with the labels hidden, following
+  the shared task's own definition (docs/LABEL_AUDIT.txt);
+- fintext label-audit score turns the filled-in sheet into the flip rate for each label
+  with 95% intervals, the corpus-wide noise rate reweighted to OSACT5's 35.5% offensive,
+  and the F1 a model that was right about every tweet would score against OSACT5's own
+  labels.
+
+That last number is the ceiling the labels impose. If it came out near or below 0.80,
+the F1 target would be unreachable on this test set by any model, and the gap target
+with it. The sample is drawn and saved, so the audit can be run later without changing
+anything else.
+
+What the evidence supports without it. The F1 target is above what any threshold
+achieves on either Arabic dataset with this model (best 0.760), and the per-dataset
+AUROC shows the shortfall is concentrated in OSACT5. Label noise is a plausible
+contributor, with examples, but unmeasured.
+
+What would move it further
+--------------------------
+
+  Option                                                             Likely effect                                                      Cost
+  ------------------------------------------------------------------ ------------------------------------------------------------------ ------------------------------------------------------------------
+  Continued pre-training of XLM-R base on unlabelled Arabic tweets   a few AUROC points; the encoder has seen little dialectal Arabic   hours of A100, plus collecting tweets
+  XLM-R large                                                        probably the largest gain                                          ~3× slower; very likely breaks the 50 ms CPU p95 budget
+  Cleaner labels (relabel OSACT5 train)                              raises the ceiling itself                                          days of annotation
+  An Arabic-specific encoder (MARBERT, AraBERT)                      strong on these tweets in the literature                           a second model to serve, against the PRD's single shared encoder
+
+Recommendation for the PRD
+--------------------------
+
+Keep the AUROC gate at 0.92; OSACT4 already passes it and it's threshold-free. Report
+the Arabic F1 and the gap with the per-dataset breakdown beside them, so a reader can
+see where the shortfall sits. Treat the absolute 0.80 F1 target as provisional until the
+label audit has measured what the data allows, and then set it relative to that ceiling.
+
+Future work
+-----------
+
+1.  Run the label audit (above). Two independent annotators, so their agreement with
+    each other can be reported alongside their agreement with the original labels.
+2.  Separate the two fixes, for Levantine only. Neither changed Arabic toxicity; whether
+    the Levantine gain is the fold or the weight would take seeds of each alone
+    (intervals.compare_groups).
+3.  Continued pre-training on Arabic tweets, the most promising model-side change that
+    keeps XLM-R base and the latency budget.
