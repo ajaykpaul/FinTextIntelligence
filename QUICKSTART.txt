@@ -32,6 +32,15 @@ Put FinTextIntelligence-share.zip in a folder of your choice, open a terminal th
 
 You are now inside the project folder. Stay in it for all the steps below.
 
+Got the code from GitHub instead? The model isn't in the repository. Download
+FinTextIntelligence-model-v4.1.zip (2.2 GB) from
+
+    https://drive.google.com/drive/folders/1LZ11Yt3gAboU3hi0or40qj-Xq79aTPsz?usp=sharing
+
+put it inside the project folder, and run:
+
+    unzip FinTextIntelligence-model-v4.1.zip -d .
+
 
 Step 2 - install
 ----------------
