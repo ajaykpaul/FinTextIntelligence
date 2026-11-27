@@ -12,8 +12,8 @@ The packages
   train_colab.ipynb                    the training notebook, also inside the code package at notebooks/                                                         40 KB     yes
   INSTALL.txt                          this guide, also inside the code package at docs/                                                                                   yes
 
-The model and data packages unzip into the project folder. Their paths (artifacts/…,
-data/…) mirror the project's, so there's nothing to move.
+The model and data packages unzip into the project folder. Their paths (artifacts/...,
+data/...) mirror the project's, so there's nothing to move.
 
 1. Requirements
 ---------------
@@ -29,7 +29,7 @@ data/…) mirror the project's, so there's nothing to move.
 
     unzip FinTextIntelligence-code-v4.1.zip                      # creates FinTextIntelligence/
     cd FinTextIntelligence
-    unzip ../FinTextIntelligence-model-v4.1.zip -d .             # adds artifacts/models/… and artifacts/onnx/…
+    unzip ../FinTextIntelligence-model-v4.1.zip -d .             # adds artifacts/models/... and artifacts/onnx/...
     python3 -m venv .venv && source .venv/bin/activate           # optional, keeps it separate
     pip install -e '.[dev,onnx]'
 
@@ -95,7 +95,7 @@ On Google Colab: the route the release was trained on
 
 1.  Put FinTextIntelligence-code-v4.1.zip in My Drive, renamed to
     FinTextIntelligence.zip. The notebook finds the newest one.
-2.  Open train_colab.ipynb in Colab. Choose Runtime → Change runtime type → A100 (or
+2.  Open train_colab.ipynb in Colab. Choose Runtime -> Change runtime type -> A100 (or
     T4).
 3.  Run steps 1 to 8. Step 5 loads the data and stops if it isn't exactly the release's:
     train fingerprint 6acad74b3fe2f5f2, dev and test 23732d3d72c04f50. Step 6 trains.
@@ -128,7 +128,7 @@ On your own GPU server
 
   Symptom                                                       Cause and fix
   ------------------------------------------------------------- ------------------------------------------------------------------------------------------------------------------------------------
-  fintext: command not found                                    not installed: run pip install -e '.[dev,onnx]' in the project folder. Or use PYTHONPATH=src python3 -m fintext.cli …
+  fintext: command not found                                    not installed: run pip install -e '.[dev,onnx]' in the project folder. Or use PYTHONPATH=src python3 -m fintext.cli ...
   ONNX artefact not found: artifacts/onnx/shared-xlmr.v4.onnx   the model pack isn't unzipped into the project folder
   scores look like the rule-based demo, not the model           --config configs/release_v4.1.toml is missing
   the onnx backend needs onnxruntime                            install the extra: pip install -e '.[onnx]'

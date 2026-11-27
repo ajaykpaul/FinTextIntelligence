@@ -11,10 +11,10 @@ Tab-separated, # starts a comment, blank lines ignored:
 
     term<TAB>subtype<TAB>severity<TAB>notes
 
-- term — matched case-insensitively against the normalised text, on word boundaries for
+- term: matched case-insensitively against the normalised text, on word boundaries for
   scripts that have them. A term containing a space is matched as a phrase.
-- subtype — one of hate, harassment, profanity, threat.
-- severity — high forces the toxic flag; medium contributes to the subtype score but
+- subtype: one of hate, harassment, profanity, threat.
+- severity: high forces the toxic flag; medium contributes to the subtype score but
   does not override the model.
 
 Curation policy (PRD 6.5)

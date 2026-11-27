@@ -5,7 +5,7 @@ Artefact family: shared-xlmr.* Service version: 1.5.0 Status: MVP, pilot only. N
 approved for unattended action on any output. Current release: shared-xlmr.v4.1 (run
 shared-xlmr-20261119-1831), not accepted: 5 of 14 gates pass on point estimates, 3 of
 those within their 95% interval; 6 fail and 3 need a pilot. Details in
-EVALUATION_REPORT.txt. v4.1 is v4 with Arabic sentiment offsets tuned on dev (0.728 →
+EVALUATION_REPORT.txt. v4.1 is v4 with Arabic sentiment offsets tuned on dev (0.728 ->
 0.739). It is registered but not promoted: promotion is blocked by latency.
 
 Earlier versions, all still registered:

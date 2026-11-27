@@ -122,13 +122,13 @@ The scorer measures and stops. signal.py is the piece that commits: one call per
 (buy, sell or review) with the reason attached. The rules are the PRD's own (5.2, 6.4),
 read top to bottom, first match wins:
 
-1.  Scoring failed → no call at all. direction=None, gated=False, and the strategy
+1.  Scoring failed -> no call at all. direction=None, gated=False, and the strategy
     proceeds as if the gate were absent. Fail-open (8.3) as a signal.
-2.  Flagged as likely misleading → review, priority="now".
-3.  Confirmation window closed with nothing found → review, priority="now". This is the
+2.  Flagged as likely misleading -> review, priority="now".
+3.  Confirmation window closed with nothing found -> review, priority="now". This is the
     state that carries signal (6.4).
-4.  Too close to call → review, priority="now".
-5.  Nothing directional → review, priority="routine".
+4.  Too close to call -> review, priority="now".
+5.  Nothing directional -> review, priority="routine".
 6.  Otherwise buy or sell at the model's confidence. Pending confirmation costs a
     haircut and optionally a hold; it never costs the call.
 

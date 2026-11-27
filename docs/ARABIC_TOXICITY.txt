@@ -46,7 +46,7 @@ From fintext.diagnose, dev and test pooled:
   ------------------------------- ------- ----------- ------------- ---------------- ------------------------ ------------------ -------------
   OSACT4 (ar)                     1,217   20%         0.975         0.942            0.760                    0.670              0.690
   OSACT5 (ar)                     1,534   36%         0.913         0.854            0.718                    0.677              0.657
-  L-HSAB (Levantine, eval only)   5,846   38%         —             0.811            0.670                    0.635              0.627
+  L-HSAB (Levantine, eval only)   5,846   38%         -             0.811            0.670                    0.635              0.627
   HateXplain (en)                 1,233   59%         0.864         0.832            0.806                    0.806              0.804
   Jigsaw (en)                     1,546   10%         0.993         0.984            0.790                    0.765              0.790
   Wikipedia Talk (en)             860     13%         0.992         0.981            0.827                    0.799              0.825
@@ -67,8 +67,8 @@ What was changed between the runs
 - Training now reads the text the service reads. The service normalises text (NFKC,
   invisible characters and diacritics removed, PII replaced) before the model sees it;
   training had been using the raw text. Both now go through preprocess.model_text.
-- Arabic spelling variants folded. أ إ آ ٱ → ا, and letters repeated three or more times
-  cut to two (غبيييي → غبيي). Numbers are never touched.
+- Arabic spelling variants folded. أ إ آ ٱ -> ا, and letters repeated three or more times
+  cut to two (غبيييي -> غبيي). Numbers are never touched.
 - Arabic toxicity rows weighted 1.5× in the loss, for the underfitting in point 2.
 
 Paired comparison. On the same test rows, resampled together (fintext compare;

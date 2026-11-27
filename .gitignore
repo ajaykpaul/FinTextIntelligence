@@ -36,7 +36,6 @@ tokenizer.json
 
 # Local editor and OS files
 .DS_Store
-.claude/
 .project
 .pydevproject
 .Rhistory

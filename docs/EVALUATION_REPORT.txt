@@ -163,7 +163,7 @@ Three things follow.
 1.  Run 2 was the luckiest of four. Identically configured runs span 0.894 to 0.907
     Arabic AUROC, and run 1's 0.896 sits inside that range. The paired test calls run 2
     better than seeds 1 and 3 by about as much as it called run 2 better than run 1. So
-    the run 1 → run 2 Arabic AUROC gain is accounted for by training variance alone, and
+    the run 1 -> run 2 Arabic AUROC gain is accounted for by training variance alone, and
     the fixes are not shown to help it.
 
 2.  The paired test answers a narrower question than it seemed. It says whether one
@@ -281,7 +281,7 @@ fintext.sentiment_offsets measures both (reports/arabic_sentiment_offsets.json):
   Neutral one-vs-rest AUROC                                     0.678                         0.636
   Positive / negative AUROC                                     0.789 / 0.736                 0.760 / 0.753
   Offsets tuned on ArSAS dev (log scale; negative fixed at 0)   positive −0.6, neutral +1.2   positive −1.1, neutral +0.6
-  Test macro-F1 without → with offsets                          0.490 → 0.569                 0.484 → 0.572
+  Test macro-F1 without -> with offsets                          0.490 -> 0.569                 0.484 -> 0.572
   Paired difference, 95% interval                               +0.078 (+0.069 to +0.087)     +0.088 (+0.078 to +0.098)
   Neutral F1 with offsets                                       0.53                          0.53
 
@@ -614,7 +614,7 @@ against 0.05.
 What this shows:
 
 - The speed is real on x86. Default int8 roughly halves model-only p95 at 256 tokens:
-  488 → 219 ms on 1 thread, 151 → 79 ms on 4. On ARM the gain was only about 1.25×.
+  488 -> 219 ms on 1 thread, 151 -> 79 ms on 4. On ARM the gain was only about 1.25×.
   Colab's vCPUs are about 3× slower than the M5, so only the ratio transfers, not the
   absolute times.
 - The accuracy isn't there. On x86, default int8 flips 9% of sentiment labels and 4–5%

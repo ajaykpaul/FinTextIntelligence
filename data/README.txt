@@ -30,7 +30,7 @@ Rebuilding it
     fintext data --full           # no caps; Jigsaw alone is 159k rows
     fintext data --raw-cache      # put the downloads in data/raw too
 
-Each folder gets rows.jsonl and a manifest.json. The rows are post-mapping — FiQA's
+Each folder gets rows.jsonl and a manifest.json. The rows are post-mapping: FiQA's
 continuous score has already become one of three labels, ArSAS's fourth "Mixed" class
 has already been dropped. That is deliberate: the mapping is where the judgement calls
 are, so it is the thing worth being able to inspect.
@@ -41,6 +41,6 @@ What is not here
 ----------------
 
 Trained weights (artifacts/models/) and the decision log (reports/) are elsewhere and
-also ignored. The provenance index — the primary sources the corroboration check
-searches — is in artifacts/provenance/, and currently holds four records, which is a
+also ignored. The provenance index (the primary sources the corroboration check
+searches) is in artifacts/provenance/, and currently holds four records, which is a
 fixture rather than a corpus.

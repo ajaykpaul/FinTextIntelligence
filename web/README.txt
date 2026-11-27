@@ -5,7 +5,7 @@ The demonstration surface for the scoring service: paste a news item, pick a con
 profile, see the scores with the triggering spans highlighted.
 
 React is the controller only. It holds the form state, calls POST /v1/signal and renders
-what comes back — no scoring logic of its own, no privileged access, so it cannot
+what comes back, with no scoring logic of its own, no privileged access, so it cannot
 display anything the API does not return.
 
 The gate's call leads the results, because that is what a trading system consumes. It is
@@ -40,7 +40,7 @@ Everything is set by a handful of tokens at the top of styles.css:
   reduced alpha rather than a separate scale. Light and dark stay consistent by
   construction: change the ink and the page follows.
 - The accent is the ink used as a surface. Solid black fills carrying paper-coloured
-  type — the status band, the primary button, the signal chips. It inverts with the
+  type: the status band, the primary button, the signal chips. It inverts with the
   theme, so the same rules give a white accent on the dark page with no second set of
   tokens.
 - Colour is reserved for verdicts. Green, red and blue appear only on the words that
@@ -49,7 +49,7 @@ Everything is set by a handful of tokens at the top of styles.css:
   redaction, so marks are a light wash plus a coloured rule underneath: red for toxicity
   evidence, ink for scam patterns, blue for the checkable claim.
 - Type does the emphasis. Verdicts are large with tight negative tracking (-0.04em) and
-  a 1.0 line height; small labels run the other way — uppercase, 0.13em tracking, muted.
+  a 1.0 line height; small labels run the other way: uppercase, 0.13em tracking, muted.
   Numbers and machine values are monospace, prose is not.
 - Pills for anything interactive, a generous radius on surfaces, hairline borders in
   ink-alpha rather than a grey.

@@ -75,7 +75,7 @@ Promotion is gated on measured latency and refuses anything above the objective 
 
 Order of operations for a new artefact:
 
-1.  Train → artifacts/models/<run>/manifest.json carries the metrics.
+1.  Train -> artifacts/models/<run>/manifest.json carries the metrics.
 2.  export_and_register exports, quantises, verifies float/int8 parity, benchmarks and
     registers. Parity failure aborts the export: thresholds tuned on the float model
     would not transfer.
