@@ -51,8 +51,9 @@ New to the project? QUICKSTART.txt has step-by-step install instructions. In sho
     make demo          # score built-in examples with the rule-based reference backend
     make serve         # http://127.0.0.1:8080/ui
 
-With the trained model (the weights ship separately as a private model pack, for size
-and licence reasons; see docs/MODEL_PACK.txt and docs/INSTALL.txt):
+With the trained model: download FinTextIntelligence-model-v4.1.zip (2.2 GB,
+non-commercial use only, please don't pass it on; see docs/MODEL_PACK.txt) from
+https://drive.google.com/drive/folders/1LZ11Yt3gAboU3hi0or40qj-Xq79aTPsz?usp=sharing
 
     unzip FinTextIntelligence-model-v4.1.zip -d .      # from the project folder
     pip install -e '.[dev,onnx]'
@@ -140,10 +141,9 @@ gRPC (first on the PRD's cut list) and scheduled ingestion pullers.
 Docs
 ----
 
-In the project root: QUICKSTART.txt (install and run), USE_AND_TEST_CASES.txt (use cases,
-test cases, last results, known issues).
-
-In docs/: INSTALL, ARCHITECTURE, MODEL_CARD, EVALUATION_REPORT (every gate and future
-work), PROJECT_REPORT (the story, including what went wrong), ARABIC_TOXICITY,
-LABEL_AUDIT, INTEGRATING_A_RUN, MODEL_PACK, RUNBOOK, LICENCE_LOG (all .txt), and
-paper/FinTextIntelligence.pdf (the project paper, ACL format).
+In the project root: QUICKSTART.txt (install and run), USE_AND_TEST_CASES.txt (use
+cases, test cases, last results, known issues). In docs/: INSTALL, ARCHITECTURE,
+MODEL_CARD, EVALUATION_REPORT (every gate and future work), PROJECT_REPORT (the story,
+including what went wrong), ARABIC_TOXICITY, LABEL_AUDIT, INTEGRATING_A_RUN, MODEL_PACK,
+RUNBOOK, LICENCE_LOG (all .txt), and paper/FinTextIntelligence.pdf (the project paper,
+ACL format).
